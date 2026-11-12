@@ -1,0 +1,34 @@
+
+name: FC 26 PSP Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get source code
+        uses: actions/checkout@v4
+
+      - name: Compile PSP game
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            pspdev/pspdev:v20261101 \
+            make
+
+      - name: Save PSP game
+        uses: actions/upload-artifact@v4
+        with:
+          name: FC-26-PSP-Prototype
+          path: EBOOT.PBP
+          if-no-files-found: error
+          
