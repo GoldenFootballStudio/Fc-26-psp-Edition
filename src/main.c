@@ -72,7 +72,7 @@ int main(void)
         v[1] = (Vertex){GU_RGBA(255, 170, 20, 255),  1.5f, -1.0f, 0.0f};
         v[2] = (Vertex){GU_RGBA(255, 170, 20, 255),  0.0f,  1.5f, 0.0f};
 
-        sceGuDrawArray(
+        sceGumDrawArray(
             GU_TRIANGLES,
             GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
             3, 0, v
