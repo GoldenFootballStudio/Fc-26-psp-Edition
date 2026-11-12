@@ -1,8 +1,10 @@
+
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
+#include <pspgum.h>
 
-PSP_MODULE_INFO("FC26 Graphics Test", 0, 1, 0);
+PSP_MODULE_INFO("FC26 3D Test", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 
 #define W 480
@@ -33,7 +35,6 @@ int main(void)
     sceGuEnable(GU_SCISSOR_TEST);
 
     sceGuDisable(GU_DEPTH_TEST);
-    sceGuDisable(GU_TEXTURE_2D);
     sceGuDisable(GU_CULL_FACE);
 
     sceGuFinish();
@@ -42,23 +43,39 @@ int main(void)
     sceDisplayWaitVblankStart();
     sceGuDisplay(GU_TRUE);
 
+    ScePspFVector3 camera = {0.0f, 0.0f, 5.0f};
+    ScePspFVector3 target = {0.0f, 0.0f, 0.0f};
+    ScePspFVector3 up = {0.0f, 1.0f, 0.0f};
+
     while (1) {
         sceGuStart(GU_DIRECT, list);
 
         sceGuClearColor(GU_RGBA(20, 40, 90, 255));
         sceGuClear(GU_COLOR_BUFFER_BIT);
 
-        Vertex *v = sceGuGetMemory(4 * sizeof(Vertex));
+        sceGumMatrixMode(GU_PROJECTION);
+        sceGumLoadIdentity();
+        sceGumPerspective(
+            60.0f, (float)W / H, 0.5f, 100.0f
+        );
 
-        v[0] = (Vertex){GU_RGBA(30, 180, 65, 255), 40, 40, 0};
-        v[1] = (Vertex){GU_RGBA(30, 180, 65, 255), 440, 40, 0};
-        v[2] = (Vertex){GU_RGBA(30, 180, 65, 255), 40, 232, 0};
-        v[3] = (Vertex){GU_RGBA(30, 180, 65, 255), 440, 232, 0};
+        sceGumMatrixMode(GU_VIEW);
+        sceGumLoadIdentity();
+        sceGumLookAt(&camera, &target, &up);
+
+        sceGumMatrixMode(GU_MODEL);
+        sceGumLoadIdentity();
+
+        Vertex *v = sceGuGetMemory(3 * sizeof(Vertex));
+
+        v[0] = (Vertex){GU_RGBA(255, 170, 20, 255), -1.5f, -1.0f, 0.0f};
+        v[1] = (Vertex){GU_RGBA(255, 170, 20, 255),  1.5f, -1.0f, 0.0f};
+        v[2] = (Vertex){GU_RGBA(255, 170, 20, 255),  0.0f,  1.5f, 0.0f};
 
         sceGuDrawArray(
-            GU_TRIANGLE_STRIP,
-            GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D,
-            4, 0, v
+            GU_TRIANGLES,
+            GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+            3, 0, v
         );
 
         sceGuFinish();
