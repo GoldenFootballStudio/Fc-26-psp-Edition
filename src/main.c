@@ -3,8 +3,10 @@
 #include <pspdisplay.h>
 #include <pspgu.h>
 #include <pspgum.h>
+#include <math.h>
+#include <string.h>
 
-PSP_MODULE_INFO("FC26 Stadium Upgrade", 0, 1, 0);
+PSP_MODULE_INFO("FC26 PSP Edition", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 
 #define W 480
@@ -19,281 +21,403 @@ typedef struct {
     float x, y, z;
 } Vertex;
 
+static Vertex vertices[4096];
+static int vertexCount = 0;
+
+#define GREEN1 0xFF287A20
+#define GREEN2 0xFF328C25
+#define WHITE  0xFFFFFFFF
+#define RED    0xFF2020E8
+#define YELLOW 0xFF20D8FF
+#define BLACK  0xFF181818
+
 static void quad3D(
-    float x1, float y1, float z1,
-    float x2, float y2, float z2,
-    float x3, float y3, float z3,
-    float x4, float y4, float z4,
+    float x1,float y1,float z1,
+    float x2,float y2,float z2,
+    float x3,float y3,float z3,
+    float x4,float y4,float z4,
     unsigned int color)
 {
-    Vertex *v = sceGuGetMemory(4 * sizeof(Vertex));
-
-    v[0] = (Vertex){color, x1, y1, z1};
-    v[1] = (Vertex){color, x2, y2, z2};
-    v[2] = (Vertex){color, x3, y3, z3};
-    v[3] = (Vertex){color, x4, y4, z4};
+    Vertex v[4] = {
+        {color,x1,y1,z1},
+        {color,x2,y2,z2},
+        {color,x3,y3,z3},
+        {color,x4,y4,z4}
+    };
 
     sceGumDrawArray(
         GU_TRIANGLE_STRIP,
         GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-        4, 0, v
+        4,0,v
     );
 }
 
 static void line3D(
-    float x1, float y1, float z1,
-    float x2, float y2, float z2,
+    float x1,float y1,float z1,
+    float x2,float y2,float z2,
     unsigned int color)
 {
-    Vertex *v = sceGuGetMemory(2 * sizeof(Vertex));
-
-    v[0] = (Vertex){color, x1, y1, z1};
-    v[1] = (Vertex){color, x2, y2, z2};
+    Vertex v[2] = {
+        {color,x1,y1,z1},
+        {color,x2,y2,z2}
+    };
 
     sceGumDrawArray(
         GU_LINES,
         GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-        2, 0, v
+        2,0,v
+    );
+}
+
+static void triangle3D(
+    float x1,float y1,float z1,
+    float x2,float y2,float z2,
+    float x3,float y3,float z3,
+    unsigned int color)
+{
+    Vertex v[3] = {
+        {color,x1,y1,z1},
+        {color,x2,y2,z2},
+        {color,x3,y3,z3}
+    };
+
+    sceGumDrawArray(
+        GU_TRIANGLES,
+        GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+        3,0,v
     );
 }
 
 static void drawSideStand(int side)
 {
-    unsigned int seats[] = {
-        GU_RGBA(35,45,105,255),
-        GU_RGBA(180,35,35,255),
-        GU_RGBA(220,190,35,255),
-        GU_RGBA(35,105,65,255)
-    };
+    int i;
+    float x = side * 12.0f;
 
-    for (int i = 0; i < 8; i++) {
-        float inner = 10.8f + i * 0.8f;
-        float outer = inner + 0.9f;
-        float bottom = 0.35f + i * 0.62f;
-        float top = bottom + 0.55f;
+    for(i=0;i<8;i++) {
+        float y = 0.5f + i * 0.65f;
+        float z1 = -17.5f - i * 0.35f;
+        float z2 =  17.5f + i * 0.35f;
 
-        float x1 = side * inner;
-        float x2 = side * outer;
+        unsigned int c = (i%2) ? 0xFF3030A0 : 0xFF4040C0;
 
         quad3D(
-            x1, bottom, -19.5f,
-            x2, top, -19.5f,
-            x1, bottom, 19.5f,
-            x2, top, 19.5f,
-            seats[i % 4]
+            x,y,z1,
+            x,y,z2,
+            x,y+0.55f,z1,
+            x,y+0.55f,z2,c
         );
     }
 }
 
 static void drawEndStand(int side)
 {
-    unsigned int seats[] = {
-        GU_RGBA(35,45,105,255),
-        GU_RGBA(180,35,35,255),
-        GU_RGBA(220,190,35,255),
-        GU_RGBA(35,105,65,255)
-    };
+    int i;
+    float z = side * 18.5f;
 
-    for (int i = 0; i < 8; i++) {
-        float inner = 16.8f + i * 0.8f;
-        float outer = inner + 0.9f;
-        float bottom = 0.35f + i * 0.62f;
-        float top = bottom + 0.55f;
+    for(i=0;i<8;i++) {
+        float y = 0.5f + i * 0.65f;
+        float x1 = -11.5f - i * 0.35f;
+        float x2 =  11.5f + i * 0.35f;
 
-        float z1 = side * inner;
-        float z2 = side * outer;
+        unsigned int c = (i%2) ? 0xFF3030A0 : 0xFF4040C0;
 
         quad3D(
-            -12.0f, bottom, z1,
-            12.0f, bottom, z1,
-            -12.0f, top, z2,
-            12.0f, top, z2,
-            seats[i % 4]
+            x1,y,z,
+            x2,y,z,
+            x1,y+0.55f,z,
+            x2,y+0.55f,z,c
         );
     }
 }
 
 static void drawRoofs(void)
 {
-    unsigned int roof = GU_RGBA(45,52,68,255);
+    quad3D(-13.0f,6.5f,-20.0f,
+           13.0f,6.5f,-20.0f,
+           -13.0f,6.5f,20.0f,
+           13.0f,6.5f,20.0f,0xFF555555);
 
-    quad3D(
-        -14.0f, 7.0f, -21.0f,
-        -18.0f, 8.0f, -21.0f,
-        -14.0f, 7.0f, 21.0f,
-        -18.0f, 8.0f, 21.0f,
-        roof
-    );
+    quad3D(-13.0f,6.5f,-20.0f,
+           -13.0f,6.5f,20.0f,
+           -13.0f,6.5f,-15.0f,
+           -13.0f,6.5f,15.0f,0xFF555555);
 
-    quad3D(
-        14.0f, 7.0f, -21.0f,
-        18.0f, 8.0f, -21.0f,
-        14.0f, 7.0f, 21.0f,
-        18.0f, 8.0f, 21.0f,
-        roof
-    );
-
-    quad3D(
-        -13.0f, 7.0f, -22.0f,
-        13.0f, 7.0f, -22.0f,
-        -13.0f, 8.0f, -26.0f,
-        13.0f, 8.0f, -26.0f,
-        roof
-    );
-
-    quad3D(
-        -13.0f, 7.0f, 22.0f,
-        13.0f, 7.0f, 22.0f,
-        -13.0f, 8.0f, 26.0f,
-        13.0f, 8.0f, 26.0f,
-        roof
-    );
+    quad3D(13.0f,6.5f,-20.0f,
+           13.0f,6.5f,20.0f,
+           13.0f,6.5f,-15.0f,
+           13.0f,6.5f,15.0f,0xFF555555);
 }
 
 static void drawStadium(void)
 {
     drawEndStand(-1);
     drawEndStand(1);
-
     drawSideStand(-1);
     drawSideStand(1);
-
     drawRoofs();
 }
 
 static void drawPitch(void)
 {
-    unsigned int grass1 = GU_RGBA(30,115,42,255);
-    unsigned int grass2 = GU_RGBA(43,145,55,255);
-    unsigned int white = GU_RGBA(255,255,255,255);
+    int i;
 
-    for (int i = 0; i < 8; i++) {
-        float z1 = -16.0f + i * 4.0f;
+    for(i=0;i<8;i++) {
+        float z1 = -16.0f + i*4.0f;
         float z2 = z1 + 4.0f;
+        unsigned int c = (i%2) ? GREEN1 : GREEN2;
 
-        quad3D(
-            -10, 0, z1,
-            10, 0, z1,
-            -10, 0, z2,
-            10, 0, z2,
-            (i % 2) ? grass1 : grass2
-        );
+        quad3D(-10.0f,0.02f,z1,
+               10.0f,0.02f,z1,
+               -10.0f,0.02f,z2,
+               10.0f,0.02f,z2,c);
     }
 
-    // Pitch boundary
-    line3D(-10,0.04f,-16, 10,0.04f,-16,white);
-    line3D(-10,0.04f,16, 10,0.04f,16,white);
-    line3D(-10,0.04f,-16,-10,0.04f,16,white);
-    line3D(10,0.04f,-16,10,0.04f,16,white);
+    /* Pitch boundary */
+    line3D(-10,0.06f,-16,10,0.06f,-16,WHITE);
+    line3D(-10,0.06f,16,10,0.06f,16,WHITE);
+    line3D(-10,0.06f,-16,-10,0.06f,16,WHITE);
+    line3D(10,0.06f,-16,10,0.06f,16,WHITE);
 
-    // Halfway line
-    line3D(-10,0.04f,0,10,0.04f,0,white);
+    /* Halfway line */
+    line3D(-10,0.06f,0,10,0.06f,0,WHITE);
 
-    // Centre circle
-    for (int i = 0; i < 64; i++) {
+    /* Centre circle */
+    for(i=0;i<64;i++) {
         float a = i * 6.2831853f / 64.0f;
-        float b = (i + 1) * 6.2831853f / 64.0f;
+        float b = (i+1) * 6.2831853f / 64.0f;
 
         line3D(
-            2.2f * __builtin_cosf(a), 0.04f,
-            2.2f * __builtin_sinf(a),
-            2.2f * __builtin_cosf(b), 0.04f,
-            2.2f * __builtin_sinf(b),
-            white
+            2.5f*cosf(a),0.06f,2.5f*sinf(a),
+            2.5f*cosf(b),0.06f,2.5f*sinf(b),
+            WHITE
         );
     }
 
-    // Penalty areas
-    line3D(-7,0.04f,-16,-7,0.04f,-12,white);
-    line3D(7,0.04f,-16,7,0.04f,-12,white);
-    line3D(-7,0.04f,-12,7,0.04f,-12,white);
+    /* Penalty areas */
+    line3D(-5.5f,0.06f,-16,5.5f,0.06f,-16,WHITE);
+    line3D(-5.5f,0.06f,-16,-5.5f,0.06f,-10,WHITE);
+    line3D(5.5f,0.06f,-16,5.5f,0.06f,-10,WHITE);
+    line3D(-5.5f,0.06f,-10,5.5f,0.06f,-10,WHITE);
 
-    line3D(-7,0.04f,16,-7,0.04f,12,white);
-    line3D(7,0.04f,16,7,0.04f,12,white);
-    line3D(-7,0.04f,12,7,0.04f,12,white);
+    line3D(-5.5f,0.06f,16,5.5f,0.06f,16,WHITE);
+    line3D(-5.5f,0.06f,16,-5.5f,0.06f,10,WHITE);
+    line3D(5.5f,0.06f,16,5.5f,0.06f,10,WHITE);
+    line3D(-5.5f,0.06f,10,5.5f,0.06f,10,WHITE);
 
-    // Goal areas
-    line3D(-3,0.04f,-16,-3,0.04f,-14,white);
-    line3D(3,0.04f,-16,3,0.04f,-14,white);
-    line3D(-3,0.04f,-14,3,0.04f,-14,white);
+    /* Goal areas */
+    line3D(-3.0f,0.07f,-16,3.0f,0.07f,-16,WHITE);
+    line3D(-3.0f,0.07f,-16,-3.0f,0.07f,-13,WHITE);
+    line3D(3.0f,0.07f,-16,3.0f,0.07f,-13,WHITE);
+    line3D(-3.0f,0.07f,-13,3.0f,0.07f,-13,WHITE);
 
-    line3D(-3,0.04f,16,-3,0.04f,14,white);
-    line3D(3,0.04f,16,3,0.04f,14,white);
-    line3D(-3,0.04f,14,3,0.04f,14,white);
+    line3D(-3.0f,0.07f,16,3.0f,0.07f,16,WHITE);
+    line3D(-3.0f,0.07f,16,-3.0f,0.07f,13,WHITE);
+    line3D(3.0f,0.07f,16,3.0f,0.07f,13,WHITE);
+    line3D(-3.0f,0.07f,13,3.0f,0.07f,13,WHITE);
 }
 
 static void drawGoals(void)
 {
-    unsigned int white = GU_RGBA(245,245,245,255);
-    unsigned int net = GU_RGBA(210,220,225,255);
+    int i;
 
-    // Goal frames
-    for (int side = -1; side <= 1; side += 2) {
-        float z = side * 16.1f;
-        float back = side * 18.4f;
+    /* Front goal frames */
+    line3D(-3.66f,0.05f,-16,3.66f,0.05f,-16,WHITE);
+    line3D(-3.66f,0.05f,-16,-3.66f,2.44f,-16,WHITE);
+    line3D(3.66f,0.05f,-16,3.66f,2.44f,-16,WHITE);
+    line3D(-3.66f,2.44f,-16,3.66f,2.44f,-16,WHITE);
 
-        line3D(-3,0.05f,z, -3,2.2f,z,white);
-        line3D(3,0.05f,z, 3,2.2f,z,white);
-        line3D(-3,2.2f,z, 3,2.2f,z,white);
+    line3D(-3.66f,0.05f,16,3.66f,0.05f,16,WHITE);
+    line3D(-3.66f,0.05f,16,-3.66f,2.44f,16,WHITE);
+    line3D(3.66f,0.05f,16,3.66f,2.44f,16,WHITE);
+    line3D(-3.66f,2.44f,16,3.66f,2.44f,16,WHITE);
 
-        // Net roof and back
-        line3D(-3,2.2f,z, -3,2.0f,back,net);
-        line3D(3,2.2f,z, 3,2.0f,back,net);
-        line3D(-3,0.05f,z, -3,0.05f,back,net);
-        line3D(3,0.05f,z, 3,0.05f,back,net);
-        line3D(-3,2.0f,back, 3,2.0f,back,net);
-        line3D(-3,0.05f,back, 3,0.05f,back,net);
+    /* Goal net lines */
+    for(i=0;i<=6;i++) {
+        float x = -3.66f + i*1.22f;
 
-        // Net mesh
-        for (int i = 1; i < 6; i++) {
-            float x = -3.0f + i;
-            line3D(x,0.05f,z, x,2.1f,back,net);
+        line3D(x,0.05f,-16,x,2.44f,-17.5f,WHITE);
+        line3D(x,2.44f,-16,x,2.44f,-17.5f,WHITE);
+
+        line3D(x,0.05f,16,x,0.05f,17.5f,WHITE);
+        line3D(x,2.44f,16,x,2.44f,17.5f,WHITE);
+    }
+
+    for(i=0;i<=4;i++) {
+        float y = i*0.61f;
+
+        line3D(-3.66f,y,-16,3.66f,y,-16,WHITE);
+        line3D(-3.66f,y,-17.5f,3.66f,y,-17.5f,WHITE);
+
+        line3D(-3.66f,y,16,3.66f,y,16,WHITE);
+        line3D(-3.66f,y,17.5f,3.66f,y,17.5f,WHITE);
+    }
+}
+
+static void drawCornerFlags(void)
+{
+    int sx,sz;
+
+    for(sx=-1;sx<=1;sx+=2) {
+        for(sz=-1;sz<=1;sz+=2) {
+            float x = sx*9.8f;
+            float z = sz*15.8f;
+
+            line3D(x,0.05f,z,x,1.8f,z,WHITE);
+
+            triangle3D(
+                x,1.8f,z,
+                x+sx*0.8f,1.55f,z,
+                x,1.25f,z,
+                (sx==sz)?RED:YELLOW
+            );
         }
+    }
+}
 
-        for (int i = 1; i < 4; i++) {
-            float y = i * 0.5f;
-            line3D(-3,y,back,3,y,back,net);
+static void drawCornerArcs(void)
+{
+    int sx,sz,i;
+
+    for(sx=-1;sx<=1;sx+=2) {
+        for(sz=-1;sz<=1;sz+=2) {
+            for(i=0;i<16;i++) {
+                float a = i*1.5707963f/16.0f;
+                float b = (i+1)*1.5707963f/16.0f;
+
+                float x1 = sx*(10.0f-0.8f*cosf(a));
+                float z1 = sz*(16.0f-0.8f*sinf(a));
+                float x2 = sx*(10.0f-0.8f*cosf(b));
+                float z2 = sz*(16.0f-0.8f*sinf(b));
+
+                line3D(x1,0.07f,z1,x2,0.07f,z2,WHITE);
+            }
         }
+    }
+}
+
+static void drawAdvertisingBoards(void)
+{
+    int i;
+
+    /* Boards along both touchlines */
+    for(i=0;i<10;i++) {
+        float z1 = -16.5f + i*3.3f;
+        float z2 = z1 + 3.0f;
+
+        quad3D(
+            -11.0f,0.1f,z1,
+            -11.0f,0.1f,z2,
+            -11.0f,1.0f,z1,
+            -11.0f,1.0f,z2,
+            (i%2)?0xFF00A0E0:0xFFE05020
+        );
+
+        quad3D(
+            11.0f,0.1f,z1,
+            11.0f,0.1f,z2,
+            11.0f,1.0f,z1,
+            11.0f,1.0f,z2,
+            (i%2)?0xFFE05020:0xFF00A0E0
+        );
+    }
+
+    /* Boards behind both goals */
+    for(i=0;i<7;i++) {
+        float x1 = -10.0f + i*3.0f;
+        float x2 = x1 + 2.7f;
+
+        quad3D(
+            x1,0.1f,-17.2f,
+            x2,0.1f,-17.2f,
+            x1,1.0f,-17.2f,
+            x2,1.0f,-17.2f,
+            (i%2)?0xFF00A0E0:0xFFE05020
+        );
+
+        quad3D(
+            x1,0.1f,17.2f,
+            x2,0.1f,17.2f,
+            x1,1.0f,17.2f,
+            x2,1.0f,17.2f,
+            (i%2)?0xFFE05020:0xFF00A0E0
+        );
+    }
+}
+
+static void drawTechnicalAreas(void)
+{
+    int side;
+
+    for(side=-1;side<=1;side+=2) {
+        float x = side*12.5f;
+
+        /* Technical area boundary */
+        line3D(x,0.08f,-5.0f,x,0.08f,5.0f,WHITE);
+        line3D(x,0.08f,-5.0f,x+side*1.0f,0.08f,-5.0f,WHITE);
+        line3D(x,0.08f,5.0f,x+side*1.0f,0.08f,5.0f,WHITE);
+
+        /* Team bench canopy */
+        quad3D(
+            x+side*0.2f,1.8f,-4.0f,
+            x+side*0.2f,1.8f,4.0f,
+            x+side*2.0f,1.8f,-4.0f,
+            x+side*2.0f,1.8f,4.0f,
+            0xFF505050
+        );
+
+        /* Bench supports */
+        line3D(x+side*0.3f,0.1f,-3.8f,
+               x+side*0.3f,1.8f,-3.8f,WHITE);
+        line3D(x+side*0.3f,0.1f,3.8f,
+               x+side*0.3f,1.8f,3.8f,WHITE);
+        line3D(x+side*1.9f,0.1f,-3.8f,
+               x+side*1.9f,1.8f,-3.8f,WHITE);
+        line3D(x+side*1.9f,0.1f,3.8f,
+               x+side*1.9f,1.8f,3.8f,WHITE);
     }
 }
 
 int main(void)
 {
-    sceGuInit();
-
-    sceGuStart(GU_DIRECT, list);
-
-    sceGuDrawBuffer(GU_PSM_8888, (void *)0, BW);
-    sceGuDispBuffer(W,H,(void *)FRAME_SIZE,BW);
-    sceGuDepthBuffer((void *)(FRAME_SIZE * 2),BW);
-
-    sceGuOffset(2048-W/2,2048-H/2);
-    sceGuViewport(2048,2048,W,H);
-    sceGuScissor(0,0,W,H);
-    sceGuEnable(GU_SCISSOR_TEST);
-
-    sceGuDisable(GU_DEPTH_TEST);
-    sceGuDisable(GU_CULL_FACE);
-
-    sceGuFinish();
-    sceGuSync(GU_SYNC_FINISH,GU_SYNC_WHAT_DONE);
-
-    sceDisplayWaitVblankStart();
-    sceGuDisplay(GU_TRUE);
-
     ScePspFVector3 camera = {0.0f,27.0f,38.0f};
     ScePspFVector3 target = {0.0f,2.0f,0.0f};
     ScePspFVector3 up = {0.0f,1.0f,0.0f};
 
-    while (1) {
+    sceGuInit();
+
+    sceGuStart(GU_DIRECT,list);
+
+    sceGuDrawBuffer(GU_PSM_8888,(void*)0,BW);
+    sceGuDispBuffer(W,H,(void*)FRAME_SIZE,BW);
+    sceGuDepthBuffer((void*)(2*FRAME_SIZE),BW);
+
+    sceGuOffset(2048-W/2,2048-H/2);
+    sceGuViewport(2048,2048,W,H);
+    sceGuDepthRange(65535,0);
+    sceGuScissor(0,0,W,H);
+
+    sceGuEnable(GU_SCISSOR_TEST);
+    sceGuDisable(GU_DEPTH_TEST);
+    sceGuDisable(GU_CULL_FACE);
+
+    sceGuClearColor(0xFF202020);
+    sceGuClear(GU_COLOR_BUFFER_BIT);
+
+    sceGuFinish();
+    sceGuSync(0,0);
+
+    sceDisplayWaitVblankStart();
+    sceGuDisplay(GU_TRUE);
+
+    for(;;) {
         sceGuStart(GU_DIRECT,list);
 
-        sceGuClearColor(GU_RGBA(18,30,48,255));
+        sceGuClearColor(0xFF202020);
         sceGuClear(GU_COLOR_BUFFER_BIT);
 
         sceGumMatrixMode(GU_PROJECTION);
         sceGumLoadIdentity();
-        sceGumPerspective(48.0f,(float)W/H,0.5f,100.0f);
+        sceGumPerspective(45.0f,(float)W/(float)H,1.0f,200.0f);
 
         sceGumMatrixMode(GU_VIEW);
         sceGumLoadIdentity();
@@ -305,13 +429,19 @@ int main(void)
         drawStadium();
         drawPitch();
         drawGoals();
+        drawCornerFlags();
+        drawCornerArcs();
+        drawAdvertisingBoards();
+        drawTechnicalAreas();
 
         sceGuFinish();
-        sceGuSync(GU_SYNC_FINISH,GU_SYNC_WHAT_DONE);
+        sceGuSync(0,0);
 
         sceDisplayWaitVblankStart();
         sceGuSwapBuffers();
     }
 
+    sceGuTerm();
+    sceKernelExitGame();
     return 0;
 }
