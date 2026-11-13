@@ -5,6 +5,7 @@
 #include <pspgum.h>
 #include <pspctrl.h>
 #include <math.h>
+#include <string.h>
 
 PSP_MODULE_INFO("FC26 PSP Football", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
@@ -17,6 +18,7 @@ PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 #define WHITE 0xFFFFFFFF
 #define RED   0xFFD02020
 #define BLUE  0xFF2020D8
+#define GREEN 0xFF287A20
 
 #define RED_ID(i) (11+(i))
 #define IS_RED(i) ((i)>=11 && (i)<22)
@@ -34,26 +36,24 @@ typedef struct {
 static unsigned int __attribute__((aligned(16))) list[262144];
 static unsigned int frameCount=0;
 
-static Player red[11], blue[11];
+static Player red[11],blue[11];
 
-static float ballX=0, ballZ=0;
-static float ballVX=0, ballVZ=0;
+static float ballX=0,ballZ=0;
+static float ballVX=0,ballVZ=0;
 
 static int ballOwner=20;
 static int ballMoving=0;
 static int passTarget=-1;
 
 static int controlled=9;
+static int redScore=0,blueScore=0;
+
 static int passCooldown=0;
 static int tackleCooldown=0;
-
-static int redScore=0;
-static int blueScore=0;
-
-static int paused=0;
-static int tactic=1;
-static int secondPress=0;
 static int goalTimer=0;
+static int paused=0;
+static int tactic=0;
+static int secondPress=0;
 
 static unsigned int previousButtons=0;
 
@@ -64,17 +64,17 @@ static float clampf(float v,float lo,float hi)
     return v;
 }
 
-static Player *getPlayer(int id)
-{
-    if(id>=11) return &red[id-11];
-    return &blue[id];
-}
-
 static float distance2(float x1,float z1,float x2,float z2)
 {
     float dx=x1-x2;
     float dz=z1-z2;
     return dx*dx+dz*dz;
+}
+
+static Player *getPlayer(int id)
+{
+    if(id>=11) return &red[id-11];
+    return &blue[id];
 }
 
 static void quad(float x1,float y1,float z1,
@@ -272,6 +272,7 @@ static void drawCorners(void)
             float z=sz*15.8f;
 
             line(x,0.05f,z,x,1.8f,z,WHITE);
+
             triangle(x,1.8f,z,
                      x+sx*0.8f,1.55f,z,
                      x,1.25f,z,0xFF2020E8);
@@ -312,7 +313,7 @@ static void drawTechnical(void)
     }
 }
 
-/* PLAYERS AND BALL */
+/* PLAYERS */
 
 static void drawPlayer(float x,float z,
                        unsigned int kit,int selected)
@@ -364,8 +365,6 @@ static void drawBall(float x,float z)
              x-0.16f,y,z,WHITE);
 }
 
-/* SIMPLE SCOREBOARD */
-
 static void drawScoreboard(void)
 {
     int i;
@@ -375,14 +374,11 @@ static void drawScoreboard(void)
          0xFF101010);
 
     quad(-5.1f,9.5f,-21.9f,-2.5f,9.5f,-21.9f,
-         -5.1f,12,-21.9f,-2.5f,12,-21.9f,
-         RED);
+         -5.1f,12,-21.9f,-2.5f,12,-21.9f,RED);
 
     quad(2.5f,9.5f,-21.9f,5.1f,9.5f,-21.9f,
-         2.5f,12,-21.9f,5.1f,12,-21.9f,
-         BLUE);
+         2.5f,12,-21.9f,5.1f,12,-21.9f,BLUE);
 
-    /* Score markers: red on left, blue on right. */
     for(i=0;i<redScore && i<5;i++) {
         float x=-1.8f+i*0.55f;
         line(x,10.0f,-21.7f,x,11.4f,-21.7f,WHITE);
@@ -394,7 +390,7 @@ static void drawScoreboard(void)
     }
 }
 
-/* FORMATIONS */
+/* TEAM SETUP */
 
 static void setupTeams(void)
 {
@@ -425,7 +421,7 @@ static void setupTeams(void)
     ballZ=red[9].z;
 }
 
-/* KICK-OFF AFTER A GOAL */
+/* KICKOFF */
 
 static void kickoff(int redStarts)
 {
@@ -446,23 +442,22 @@ static void kickoff(int redStarts)
     passCooldown=30;
     goalTimer=90;
 
+    ballX=0;
+    ballZ=0;
+
     if(redStarts) {
         red[9].x=0;
         red[9].z=0;
         ballOwner=RED_ID(9);
-        ballX=0;
-        ballZ=0;
         controlled=9;
     } else {
         blue[9].x=0;
         blue[9].z=0;
         ballOwner=9;
-        ballX=0;
-        ballZ=0;
     }
 }
 
-/* PASS TARGET */
+/* PASSING */
 
 static int findPassTarget(int passer,int teamRed,int through)
 {
@@ -473,10 +468,13 @@ static int findPassTarget(int passer,int teamRed,int through)
     for(i=0;i<11;i++) {
         int id=teamRed?RED_ID(i):i;
         Player *to=getPlayer(id);
+
         float dx=to->x-from->x;
         float dz=to->z-from->z;
         float d=sqrtf(dx*dx+dz*dz);
-        float forward=teamRed?dz:-dz;
+
+        /* Red attacks toward negative Z. */
+        float forward=teamRed?-dz:dz;
         float score;
 
         if(id==passer || d<1.0f || d>18.0f)
@@ -500,6 +498,7 @@ static void kickToPlayer(int passer,int target,float power)
 {
     Player *from;
     Player *to;
+
     float dx,dz,d;
 
     if(target<0 || target>=22) return;
@@ -509,12 +508,13 @@ static void kickToPlayer(int passer,int target,float power)
 
     dx=to->x-from->x;
     dz=to->z-from->z;
+
     d=sqrtf(dx*dx+dz*dz);
 
     if(d<0.1f) return;
 
     ballX=from->x;
-    ballZ=from->z+(IS_RED(passer)?0.4f:-0.4f);
+    ballZ=from->z+(IS_RED(passer)?-0.4f:0.4f);
 
     ballVX=(dx/d)*power;
     ballVZ=(dz/d)*power;
@@ -529,15 +529,17 @@ static void kickToPlayer(int passer,int target,float power)
 static void shootBall(int power,int chip)
 {
     Player *p=&red[controlled];
+
     float aimX=0.0f;
 
     if(p->x>0.8f) aimX=-0.12f;
     if(p->x<-0.8f) aimX=0.12f;
 
     ballX=p->x;
-    ballZ=p->z+0.45f;
+    ballZ=p->z-0.45f;
+
     ballVX=aimX*(chip?0.7f:1.0f);
-    ballVZ=power?0.78f:0.59f;
+    ballVZ=-(power?0.78f:0.59f);
 
     ballOwner=-1;
     ballMoving=1;
@@ -549,14 +551,17 @@ static void shootBall(int power,int chip)
 static void attemptTackle(int sliding)
 {
     int enemy=ballOwner;
+
     Player *p=&red[controlled];
     Player *e;
+
     float d;
 
     if(enemy<0 || IS_RED(enemy) || tackleCooldown>0)
         return;
 
     e=getPlayer(enemy);
+
     d=sqrtf(distance2(p->x,p->z,e->x,e->z));
 
     if(d<(sliding?2.0f:1.45f)) {
@@ -565,6 +570,7 @@ static void attemptTackle(int sliding)
         ballVX=0;
         ballVZ=0;
         passTarget=-1;
+
         tackleCooldown=sliding?65:35;
     } else {
         tackleCooldown=sliding?45:20;
@@ -614,13 +620,14 @@ static void switchDirectional(float dx,float dz)
     if(best>=0) controlled=best;
 }
 
-/* AI TEAM MOVEMENT */
+/* AI */
 
 static void updateAI(void)
 {
     int i;
     int nearestBlue=0;
     int nearestRed=0;
+
     float db=99999.0f;
     float dr=99999.0f;
 
@@ -632,7 +639,7 @@ static void updateAI(void)
         if(d2<dr) { dr=d2; nearestRed=i; }
     }
 
-    /* Blue AI: formation and ball pressure. */
+    /* Blue team AI. */
     for(i=0;i<11;i++) {
         float tx=blue[i].homeX;
         float tz=blue[i].homeZ;
@@ -646,10 +653,10 @@ static void updateAI(void)
 
         if(ballOwner>=0 && !IS_RED(ballOwner)) {
             if(ballOwner==i) {
-                tz-=0.045f;
+                tz+=0.045f;
             } else {
-                tx+= (ballX-tx)*0.10f;
-                tz+= (ballZ-tz)*0.08f;
+                tx+=(ballX-tx)*0.10f;
+                tz+=(ballZ-tz)*0.08f;
             }
         }
 
@@ -660,7 +667,7 @@ static void updateAI(void)
         blue[i].z+=(tz-blue[i].z)*0.018f;
     }
 
-    /* Red teammates: support the attack and defend. */
+    /* Red teammates support the controlled player. */
     for(i=0;i<11;i++) {
         float tx,tz;
 
@@ -676,12 +683,12 @@ static void updateAI(void)
             }
         }
 
-        if(ballOwner>=11 && ballOwner<22) {
+        if(IS_RED(ballOwner)) {
             if(i==ballOwner-11) {
                 tx=red[i].homeX;
                 tz=red[i].homeZ;
             } else if(i>=5) {
-                tz+=0.15f;
+                tz-=0.15f;
             }
         }
 
@@ -692,15 +699,16 @@ static void updateAI(void)
         red[i].z+=(tz-red[i].z)*0.016f;
     }
 
-    /* Goalkeepers follow the ball across their goal line. */
+    /* Red goalkeeper protects positive-Z goal. */
     red[0].x+=(clampf(ballX,-2.5f,2.5f)-red[0].x)*0.025f;
-    red[0].z+=(-14.3f-red[0].z)*0.025f;
+    red[0].z+=(14.3f-red[0].z)*0.025f;
 
+    /* Blue goalkeeper protects negative-Z goal. */
     blue[0].x+=(clampf(ballX,-2.5f,2.5f)-blue[0].x)*0.025f;
-    blue[0].z+=(14.3f-blue[0].z)*0.025f;
+    blue[0].z+=(-14.3f-blue[0].z)*0.025f;
 }
 
-/* BALL PHYSICS AND POSSESSION */
+/* BALL PHYSICS */
 
 static void updateBall(void)
 {
@@ -712,7 +720,7 @@ static void updateBall(void)
         Player *p=getPlayer(ballOwner);
 
         ballX=p->x;
-        ballZ=p->z+(IS_RED(ballOwner)?0.42f:-0.42f);
+        ballZ=p->z+(IS_RED(ballOwner)?-0.42f:0.42f);
     }
 
     if(ballMoving) {
@@ -722,36 +730,44 @@ static void updateBall(void)
         ballVX*=0.992f;
         ballVZ*=0.992f;
 
+        /* A pass is received only when the ball reaches its target. */
         if(passTarget>=0) {
             Player *target=getPlayer(passTarget);
 
-            if(distance2(target->x,target->z,ballX,ballZ)<1.2f) {
+            if(distance2(target->x,target->z,ballX,ballZ)<0.45f) {
                 ballOwner=passTarget;
                 ballMoving=0;
-                passTarget=-1;
                 ballVX=0;
                 ballVZ=0;
+
+                if(IS_RED(passTarget))
+                    controlled=passTarget-11;
+
+                passTarget=-1;
             }
         }
 
-        /* Goals. Red attacks toward positive Z. */
-        if(ballZ>16.2f && fabsf(ballX)<3.66f) {
+        /* Red scores at the negative-Z goal. */
+        if(ballZ<-16.2f && fabsf(ballX)<3.66f) {
             redScore++;
             kickoff(0);
             return;
         }
 
-        if(ballZ<-16.2f && fabsf(ballX)<3.66f) {
+        /* Blue scores at the positive-Z goal. */
+        if(ballZ>16.2f && fabsf(ballX)<3.66f) {
             blueScore++;
             kickoff(1);
             return;
         }
 
-        /* Keep the ball in the playable area after it goes wide. */
+        /* Ball out of play. */
         if(ballX<-9.7f || ballX>9.7f ||
            ballZ<-17.5f || ballZ>17.5f) {
+
             ballX=clampf(ballX,-9.3f,9.3f);
             ballZ=clampf(ballZ,-15.0f,15.0f);
+
             ballVX=0;
             ballVZ=0;
             ballMoving=0;
@@ -766,10 +782,11 @@ static void updateBall(void)
         }
     }
 
-    /* Loose-ball collection by either team. */
+    /* Both teams can collect a loose ball. */
     if(!ballMoving && ballOwner<0) {
         for(i=0;i<22;i++) {
             Player *p=getPlayer(i);
+
             float d=distance2(p->x,p->z,ballX,ballZ);
 
             if(d<bestD) {
@@ -781,6 +798,9 @@ static void updateBall(void)
         if(best>=0 && bestD<0.75f) {
             ballOwner=best;
             ballMoving=0;
+
+            if(IS_RED(best))
+                controlled=best-11;
         }
     }
 
@@ -797,7 +817,8 @@ static void goalkeeperRush(void)
     float dz=ballZ-red[0].z;
     float d=sqrtf(dx*dx+dz*dz);
 
-    if(d>0.1f && ballZ<0.0f) {
+    /* Red keeper rushes only in the red team's half. */
+    if(d>0.1f && ballZ>0.0f) {
         red[0].x+=dx/d*0.32f;
         red[0].z+=dz/d*0.32f;
     }
@@ -805,6 +826,8 @@ static void goalkeeperRush(void)
     if(distance2(red[0].x,red[0].z,ballX,ballZ)<1.0f) {
         ballOwner=RED_ID(0);
         ballMoving=0;
+        ballVX=0;
+        ballVZ=0;
         passTarget=-1;
     }
 }
@@ -815,9 +838,10 @@ static void updateMatch(void)
 {
     SceCtrlData pad;
     Player *p;
+
     float speed=0.12f;
     float ax,ay;
-    float dx=0, dz=0;
+    float dx=0,dz=0;
 
     unsigned int pressed;
     unsigned int held;
@@ -827,18 +851,16 @@ static void updateMatch(void)
     held=pad.Buttons;
     pressed=held & ~previousButtons;
 
-    if(pressed & PSP_CTRL_START) {
+    if(pressed & PSP_CTRL_START)
         paused=!paused;
-    }
 
     if(paused) {
         previousButtons=held;
         return;
     }
 
-    if(pressed & PSP_CTRL_SELECT) {
+    if(pressed & PSP_CTRL_SELECT)
         tactic=(tactic+1)%3;
-    }
 
     if(held & PSP_CTRL_RTRIGGER)
         speed=0.20f;
@@ -847,20 +869,23 @@ static void updateMatch(void)
 
     if(held & PSP_CTRL_LEFT)  dx-=1;
     if(held & PSP_CTRL_RIGHT) dx+=1;
-    if(held & PSP_CTRL_UP)    dz+=1;
-    if(held & PSP_CTRL_DOWN)  dz-=1;
+
+    /* Camera faces toward negative Z. */
+    if(held & PSP_CTRL_UP)    dz-=1;
+    if(held & PSP_CTRL_DOWN)  dz+=1;
 
     ax=((int)pad.Lx-128)/127.0f;
     ay=((int)pad.Ly-128)/127.0f;
 
     if(fabsf(ax)>0.18f) dx+=ax;
-    if(fabsf(ay)>0.18f) dz-=ay;
+    if(fabsf(ay)>0.18f) dz+=ay;
 
-    /* Skill move: R + L + direction while attacking. */
+    /* Skill move: R + L + direction. */
     if((held & PSP_CTRL_RTRIGGER) &&
        (held & PSP_CTRL_LTRIGGER) &&
        ballOwner==RED_ID(controlled) &&
        (fabsf(dx)+fabsf(dz)>0.1f)) {
+
         p->x+=dx*speed*1.5f;
         p->z+=dz*speed*1.5f;
     } else {
@@ -871,16 +896,17 @@ static void updateMatch(void)
     p->x=clampf(p->x,-9.0f,9.0f);
     p->z=clampf(p->z,-14.5f,14.5f);
 
-    /* Switch player: L. */
+    /* L: switch player. */
     if((pressed & PSP_CTRL_LTRIGGER) &&
        !(held & PSP_CTRL_CROSS)) {
+
         if(fabsf(dx)+fabsf(dz)>0.2f)
             switchDirectional(dx,dz);
         else
             switchNearestPlayer();
     }
 
-    /* L + X: switch to nearest defender and pressure. */
+    /* L + X: switch to nearest defender. */
     if((held & PSP_CTRL_LTRIGGER) &&
        (pressed & PSP_CTRL_CROSS) &&
        ballOwner>=0 && !IS_RED(ballOwner)) {
@@ -891,14 +917,16 @@ static void updateMatch(void)
     secondPress=((held & PSP_CTRL_LTRIGGER) &&
                  (held & PSP_CTRL_RTRIGGER))?1:0;
 
-    /* ATTACKING: red team has the ball. */
+    /* ATTACKING */
     if(ballOwner==RED_ID(controlled) &&
        !ballMoving && passCooldown==0) {
 
         /* X + Triangle: one-two pass. */
         if((pressed & PSP_CTRL_CROSS) &&
            (held & PSP_CTRL_TRIANGLE)) {
+
             int target=findPassTarget(RED_ID(controlled),1,1);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.38f);
                 passCooldown=25;
@@ -908,7 +936,9 @@ static void updateMatch(void)
         /* X + R: pass and forward run. */
         else if((pressed & PSP_CTRL_CROSS) &&
                 (held & PSP_CTRL_RTRIGGER)) {
+
             int target=findPassTarget(RED_ID(controlled),1,0);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.36f);
                 passCooldown=25;
@@ -918,13 +948,14 @@ static void updateMatch(void)
         /* X: short pass. */
         else if(pressed & PSP_CTRL_CROSS) {
             int target=findPassTarget(RED_ID(controlled),1,0);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.32f);
                 passCooldown=20;
             }
         }
 
-        /* Square + Triangle: chip-style shot. */
+        /* Square + Triangle: chip shot. */
         else if((pressed & PSP_CTRL_SQUARE) &&
                 (held & PSP_CTRL_TRIANGLE)) {
             shootBall(1,1);
@@ -947,16 +978,19 @@ static void updateMatch(void)
         /* Circle + R: driven cross. */
         else if((pressed & PSP_CTRL_CIRCLE) &&
                 (held & PSP_CTRL_RTRIGGER)) {
+
             int target=findPassTarget(RED_ID(controlled),1,1);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.55f);
                 passCooldown=30;
             }
         }
 
-        /* Circle: cross / lob pass. */
+        /* Circle: cross / long pass. */
         else if(pressed & PSP_CTRL_CIRCLE) {
             int target=findPassTarget(RED_ID(controlled),1,1);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.47f);
                 passCooldown=25;
@@ -966,7 +1000,9 @@ static void updateMatch(void)
         /* Triangle + R: long through ball. */
         else if((pressed & PSP_CTRL_TRIANGLE) &&
                 (held & PSP_CTRL_RTRIGGER)) {
+
             int target=findPassTarget(RED_ID(controlled),1,1);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.52f);
                 passCooldown=30;
@@ -976,6 +1012,7 @@ static void updateMatch(void)
         /* Triangle: through ball. */
         else if(pressed & PSP_CTRL_TRIANGLE) {
             int target=findPassTarget(RED_ID(controlled),1,1);
+
             if(target>=0) {
                 kickToPlayer(RED_ID(controlled),target,0.40f);
                 passCooldown=25;
@@ -983,23 +1020,20 @@ static void updateMatch(void)
         }
     }
 
-    /* DEFENDING: blue team has the ball. */
+    /* DEFENDING */
     else if(ballOwner>=0 && !IS_RED(ballOwner)) {
 
         /* Triangle: goalkeeper rush. */
-        if(pressed & PSP_CTRL_TRIANGLE) {
+        if(pressed & PSP_CTRL_TRIANGLE)
             goalkeeperRush();
-        }
 
         /* Square: sliding tackle. */
-        if(pressed & PSP_CTRL_SQUARE) {
+        if(pressed & PSP_CTRL_SQUARE)
             attemptTackle(1);
-        }
 
         /* Circle: standing tackle. */
-        if(pressed & PSP_CTRL_CIRCLE) {
+        if(pressed & PSP_CTRL_CIRCLE)
             attemptTackle(0);
-        }
 
         /* X: pressure / contain. */
         if(held & PSP_CTRL_CROSS) {
@@ -1019,6 +1053,7 @@ static void updateMatch(void)
         /* X + R: sprint pressure. */
         if((held & PSP_CTRL_CROSS) &&
            (held & PSP_CTRL_RTRIGGER)) {
+
             float dx=ballX-p->x;
             float dz=ballZ-p->z;
             float d=sqrtf(dx*dx+dz*dz);
@@ -1033,7 +1068,7 @@ static void updateMatch(void)
         }
     }
 
-    /* X while the ball is loose: pressure and collect. */
+    /* X while the ball is loose: move to collect it. */
     if(ballOwner<0 && (held & PSP_CTRL_CROSS)) {
         float dx=ballX-p->x;
         float dz=ballZ-p->z;
@@ -1125,11 +1160,10 @@ int main(void)
         drawTechnical();
 
         /* Blue AI team. */
-        for(i=0;i<11;i++) {
+        for(i=0;i<11;i++)
             drawPlayer(blue[i].x,blue[i].z,BLUE,0);
-        }
 
-        /* Red team: player-controlled. */
+        /* Red player-controlled team. */
         for(i=0;i<11;i++) {
             unsigned int kit=(i==0)?0xFF20A020:RED;
 
