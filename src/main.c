@@ -6,7 +6,7 @@
 #include <pspctrl.h>
 #include <math.h>
 
-PSP_MODULE_INFO("FC26 Playable Prototype",0,1,0);
+PSP_MODULE_INFO("FC26 AI Prototype",0,1,0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 
 #define W 480
@@ -14,6 +14,8 @@ PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 #define BW 512
 #define FRAME_SIZE (BW*H*4)
 #define WHITE 0xFFFFFFFF
+#define BLUE 0xFF2020D8
+#define RED 0xFFD02020
 
 static unsigned int __attribute__((aligned(16))) list[262144];
 static unsigned int frameCount=0;
@@ -22,6 +24,45 @@ typedef struct {
     unsigned int color;
     float x,y,z;
 } Vertex;
+
+typedef struct {
+    float homeX,homeZ;
+    float x,z;
+} AIPlayer;
+
+static AIPlayer blue[10]={
+    {0,14.3f,0,14.3f},
+    {-7,10,-7,10},
+    {-2.3f,11,-2.3f,11},
+    {2.3f,11,2.3f,11},
+    {7,10,7,10},
+    {-5,5,-5,5},
+    {5,5,5,5},
+    {-6,-3,-6,-3},
+    {0,-5,0,-5},
+    {6,-3,6,-3}
+};
+
+static AIPlayer red[11]={
+    {0,-14.3f,0,-14.3f},
+    {-7,-10,-7,-10},
+    {-2.3f,-11,-2.3f,-11},
+    {2.3f,-11,2.3f,-11},
+    {7,-10,7,-10},
+    {-5,-4,-5,-4},
+    {0,-3,0,-3},
+    {5,-4,5,-4},
+    {-6,2,-6,2},
+    {0,4,0,4},
+    {6,2,6,2}
+};
+
+static float playerX=0.0f,playerZ=2.0f;
+static float ballX=0.0f,ballZ=1.0f;
+static float ballVX=0.0f,ballVZ=0.0f;
+static int ballFree=0;
+static int passCooldown=0;
+static unsigned int previousButtons=0;
 
 static void quad(float x1,float y1,float z1,
                  float x2,float y2,float z2,
@@ -33,15 +74,18 @@ static void quad(float x1,float y1,float z1,
         {c,x1,y1,z1},{c,x2,y2,z2},
         {c,x3,y3,z3},{c,x4,y4,z4}
     };
+
     sceGumDrawArray(GU_TRIANGLE_STRIP,
         GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
         4,0,v);
 }
 
 static void line(float x1,float y1,float z1,
-                 float x2,float y2,float z2,unsigned int c)
+                 float x2,float y2,float z2,
+                 unsigned int c)
 {
     Vertex v[2]={{c,x1,y1,z1},{c,x2,y2,z2}};
+
     sceGumDrawArray(GU_LINES,
         GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
         2,0,v);
@@ -49,11 +93,13 @@ static void line(float x1,float y1,float z1,
 
 static void triangle(float x1,float y1,float z1,
                      float x2,float y2,float z2,
-                     float x3,float y3,float z3,unsigned int c)
+                     float x3,float y3,float z3,
+                     unsigned int c)
 {
     Vertex v[3]={
         {c,x1,y1,z1},{c,x2,y2,z2},{c,x3,y3,z3}
     };
+
     sceGumDrawArray(GU_TRIANGLES,
         GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
         3,0,v);
@@ -82,6 +128,7 @@ static void drawPitch(void)
     for(i=0;i<64;i++) {
         float a=i*6.2831853f/64;
         float b=(i+1)*6.2831853f/64;
+
         line(2.5f*cosf(a),0.06f,2.5f*sinf(a),
              2.5f*cosf(b),0.06f,2.5f*sinf(b),WHITE);
     }
@@ -112,20 +159,16 @@ static void drawPitch(void)
 static void drawStands(void)
 {
     int s,r;
-    unsigned int red=0xFF3030B0;
-    unsigned int blue=0xFF404080;
 
     for(s=-1;s<=1;s+=2) {
         for(r=0;r<8;r++) {
             float inner=11.3f+r*0.8f;
             float outer=inner+0.8f;
             float y=0.45f+r*0.55f;
-            unsigned int c=(r%2)?red:blue;
+            unsigned int c=(r%2)?0xFF3030B0:0xFF404080;
 
-            quad(s*inner,y,-20,
-                 s*outer,y,-20,
-                 s*inner,y,20,
-                 s*outer,y,20,c);
+            quad(s*inner,y,-20,s*outer,y,-20,
+                 s*inner,y,20,s*outer,y,20,c);
         }
     }
 
@@ -134,20 +177,16 @@ static void drawStands(void)
             float inner=17.4f+r*0.75f;
             float outer=inner+0.75f;
             float y=0.45f+r*0.55f;
-            unsigned int c=(r%2)?red:blue;
+            unsigned int c=(r%2)?0xFF3030B0:0xFF404080;
 
-            quad(-12,y,s*inner,
-                 12,y,s*inner,
-                 -12,y,s*outer,
-                 12,y,s*outer,c);
+            quad(-12,y,s*inner,12,y,s*inner,
+                 -12,y,s*outer,12,y,s*outer,c);
         }
     }
 
     for(s=-1;s<=1;s+=2) {
-        quad(s*16.0f,5.2f,-21,
-             s*19.0f,5.2f,-21,
-             s*16.0f,5.2f,21,
-             s*19.0f,5.2f,21,0xFF555555);
+        quad(s*16,5.2f,-21,s*19,5.2f,-21,
+             s*16,5.2f,21,s*19,5.2f,21,0xFF555555);
     }
 }
 
@@ -156,6 +195,7 @@ static void drawStands(void)
 static void drawCrowd(void)
 {
     int s,r,n;
+
     unsigned int colors[6]={
         0xFFE03030,0xFF3030D0,0xFFFFFFFF,
         0xFF20A040,0xFF20A0E0,0xFF303030
@@ -168,10 +208,10 @@ static void drawCrowd(void)
                 float x=s*(11.7f+r*0.8f);
                 float y=0.65f+r*0.55f;
                 float b=0.06f*sinf(frameCount*0.04f+n+r);
-                unsigned int c=colors[(n+r)%6];
 
                 quad(x,y+b,z,x,y+b,z+0.35f,
-                     x,y+0.3f+b,z,x,y+0.3f+b,z+0.35f,c);
+                     x,y+0.3f+b,z,x,y+0.3f+b,z+0.35f,
+                     colors[(n+r)%6]);
             }
         }
 
@@ -181,10 +221,10 @@ static void drawCrowd(void)
                 float z=s*(17.8f+r*0.75f);
                 float y=0.65f+r*0.55f;
                 float b=0.06f*sinf(frameCount*0.04f+n+r);
-                unsigned int c=colors[(n+r*2)%6];
 
                 quad(x,y+b,z,x+0.35f,y+b,z,
-                     x,y+0.3f+b,z,x+0.35f,y+0.3f+b,z,c);
+                     x,y+0.3f+b,z,x+0.35f,y+0.3f+b,z,
+                     colors[(n+r*2)%6]);
             }
         }
     }
@@ -219,7 +259,7 @@ static void drawGoals(void)
     int s,n;
 
     for(s=-1;s<=1;s+=2) {
-        float z=s*16.0f;
+        float z=s*16;
 
         line(-3.66f,0.05f,z,3.66f,0.05f,z,WHITE);
         line(-3.66f,0.05f,z,-3.66f,2.44f,z,WHITE);
@@ -238,7 +278,7 @@ static void drawGoals(void)
     }
 }
 
-/* CORNER FLAGS */
+/* CORNERS */
 
 static void drawCorners(void)
 {
@@ -250,8 +290,8 @@ static void drawCorners(void)
             float z=sz*15.8f;
 
             line(x,0.05f,z,x,1.8f,z,WHITE);
-            triangle(x,1.8f,z,
-                     x+sx*0.8f,1.55f,z,
+
+            triangle(x,1.8f,z,x+sx*0.8f,1.55f,z,
                      x,1.25f,z,0xFF2020E8);
 
             for(i=0;i<12;i++) {
@@ -277,15 +317,11 @@ static void drawBoards(void)
         float z=-16+i*3.2f;
         unsigned int c=(i%2)?0xFF00A0E0:0xFFE05020;
 
-        quad(-10.8f,0.1f,z,
-             -10.8f,0.1f,z+2.8f,
-             -10.8f,1.0f,z,
-             -10.8f,1.0f,z+2.8f,c);
+        quad(-10.8f,0.1f,z,-10.8f,0.1f,z+2.8f,
+             -10.8f,1,z,-10.8f,1,z+2.8f,c);
 
-        quad(10.8f,0.1f,z,
-             10.8f,0.1f,z+2.8f,
-             10.8f,1.0f,z,
-             10.8f,1.0f,z+2.8f,c);
+        quad(10.8f,0.1f,z,10.8f,0.1f,z+2.8f,
+             10.8f,1,z,10.8f,1,z+2.8f,c);
     }
 }
 
@@ -296,16 +332,16 @@ static void drawTechnical(void)
     int s;
 
     for(s=-1;s<=1;s+=2) {
-        float x=s*12.0f;
+        float x=s*12;
 
         line(x,0.08f,-5,x,0.08f,5,WHITE);
-        line(x,0.08f,-5,x+s*2.0f,0.08f,-5,WHITE);
-        line(x,0.08f,5,x+s*2.0f,0.08f,5,WHITE);
+        line(x,0.08f,-5,x+s*2,0.08f,-5,WHITE);
+        line(x,0.08f,5,x+s*2,0.08f,5,WHITE);
 
         quad(x+s*0.2f,1.8f,-4,
              x+s*0.2f,1.8f,4,
-             x+s*2.0f,1.8f,-4,
-             x+s*2.0f,1.8f,4,0xFF505050);
+             x+s*2,1.8f,-4,
+             x+s*2,1.8f,4,0xFF505050);
     }
 }
 
@@ -319,17 +355,15 @@ static void digit(float x,float y,float z,int number)
     };
 
     unsigned char b=segments[number%10];
-    float w=0.65f;
-    float h=1.0f;
-    unsigned int c=WHITE;
+    float w=0.65f,h=1.0f;
 
-    if(b&1) line(x,y+h,z,x+w,y+h,z,c);
-    if(b&2) line(x+w,y+h,z,x+w,y+h/2,z,c);
-    if(b&4) line(x+w,y+h/2,z,x+w,y,z,c);
-    if(b&8) line(x,y,z,x+w,y,z,c);
-    if(b&16) line(x,y+h/2,z,x,y,z,c);
-    if(b&32) line(x,y+h,z,x,y+h/2,z,c);
-    if(b&64) line(x,y+h/2,z,x+w,y+h/2,z,c);
+    if(b&1) line(x,y+h,z,x+w,y+h,z,WHITE);
+    if(b&2) line(x+w,y+h,z,x+w,y+h/2,z,WHITE);
+    if(b&4) line(x+w,y+h/2,z,x+w,y,z,WHITE);
+    if(b&8) line(x,y,z,x+w,y,z,WHITE);
+    if(b&16) line(x,y+h/2,z,x,y,z,WHITE);
+    if(b&32) line(x,y+h,z,x,y+h/2,z,WHITE);
+    if(b&64) line(x,y+h/2,z,x+w,y+h/2,z,WHITE);
 }
 
 static void drawScoreboard(void)
@@ -337,23 +371,17 @@ static void drawScoreboard(void)
     int minutes=(frameCount/3600)%100;
     int seconds=(frameCount/60)%60;
 
-    quad(-5.5f,9.0f,-22,
-          5.5f,9.0f,-22,
-         -5.5f,12.5f,-22,
-          5.5f,12.5f,-22,0xFF101010);
+    quad(-5.5f,9,-22,5.5f,9,-22,
+         -5.5f,12.5f,-22,5.5f,12.5f,-22,0xFF101010);
 
-    quad(-5.1f,9.5f,-21.9f,
-         -2.5f,9.5f,-21.9f,
-         -5.1f,12.0f,-21.9f,
-         -2.5f,12.0f,-21.9f,0xFF2020C0);
+    quad(-5.1f,9.5f,-21.9f,-2.5f,9.5f,-21.9f,
+         -5.1f,12,-21.9f,-2.5f,12,-21.9f,0xFF2020C0);
 
-    quad(2.5f,9.5f,-21.9f,
-         5.1f,9.5f,-21.9f,
-         2.5f,12.0f,-21.9f,
-         5.1f,12.0f,-21.9f,0xFFFFFFFF);
+    quad(2.5f,9.5f,-21.9f,5.1f,9.5f,-21.9f,
+         2.5f,12,-21.9f,5.1f,12,-21.9f,0xFFFFFFFF);
 
-    digit(-1.3f,10.0f,-21.8f,0);
-    digit(0.2f,10.0f,-21.8f,0);
+    digit(-1.3f,10,-21.8f,0);
+    digit(0.2f,10,-21.8f,0);
 
     digit(-1.5f,8.1f,-21.8f,minutes/10);
     digit(-0.6f,8.1f,-21.8f,minutes%10);
@@ -361,25 +389,18 @@ static void drawScoreboard(void)
     digit(1.5f,8.1f,-21.8f,seconds%10);
 }
 
-/* PLAYER AND BALL */
-
-static float playerX=0.0f, playerZ=2.0f;
-static float ballX=0.0f, ballZ=1.0f;
-static float ballVX=0.0f, ballVZ=0.0f;
-static int ballFree=0;
-static int passCooldown=0;
-static unsigned int previousButtons=0;
+/* PLAYERS */
 
 static void drawPlayer(float x,float z,unsigned int kit,int controlled)
 {
-    unsigned int shorts=0xFF202020;
+    float bob=0.035f*sinf(frameCount*0.18f+(controlled?0:1.7f));
     unsigned int skin=0xFFB87945;
-    float bob=0.035f*sinf(frameCount*0.18f+(controlled?0.0f:1.7f));
 
     line(x-0.22f,0.12f,z,x-0.25f,0.78f+bob,z,0xFF101010);
     line(x+0.22f,0.12f,z,x+0.25f,0.78f+bob,z,0xFF101010);
-    line(x-0.25f,0.78f+bob,z,x-0.18f,1.12f+bob,z,shorts);
-    line(x+0.25f,0.78f+bob,z,x+0.18f,1.12f+bob,z,shorts);
+
+    line(x-0.25f,0.78f+bob,z,x-0.18f,1.12f+bob,z,0xFF202020);
+    line(x+0.25f,0.78f+bob,z,x+0.18f,1.12f+bob,z,0xFF202020);
 
     quad(x-0.34f,1.05f+bob,z,
          x+0.34f,1.05f+bob,z,
@@ -400,36 +421,100 @@ static void drawPlayer(float x,float z,unsigned int kit,int controlled)
     }
 }
 
+/* BALL */
+
 static void drawBall(float x,float z)
 {
     float y=0.18f+0.035f*sinf(frameCount*0.25f);
     float r=0.19f;
-    unsigned int white=0xFFFFFFFF, black=0xFF202020;
 
-    triangle(x,y+r,z,x-r,y,z,x,y,z-r,white);
-    triangle(x,y+r,z,x,y,z-r,x+r,y,z,white);
-    triangle(x,y+r,z,x+r,y,z,x,y,z+r,black);
-    triangle(x,y+r,z,x,y,z+r,x-r,y,z,white);
-    triangle(x,y-r,z,x,y,z-r,x-r,y,z,black);
-    triangle(x,y-r,z,x+r,y,z,x,y,z-r,white);
-    triangle(x,y-r,z,x,y,z+r,x+r,y,z,white);
-    triangle(x,y-r,z,x-r,y,z,x,y,z+r,white);
+    triangle(x,y+r,z,x-r,y,z,x,y,z-r,WHITE);
+    triangle(x,y+r,z,x,y,z-r,x+r,y,z,WHITE);
+    triangle(x,y+r,z,x+r,y,z,x,y,z+r,0xFF202020);
+    triangle(x,y+r,z,x,y,z+r,x-r,y,z,WHITE);
+
+    triangle(x,y-r,z,x,y,z-r,x-r,y,z,0xFF202020);
+    triangle(x,y-r,z,x+r,y,z,x,y,z-r,WHITE);
+    triangle(x,y-r,z,x,y,z+r,x+r,y,z,WHITE);
+    triangle(x,y-r,z,x-r,y,z,x,y,z+r,WHITE);
 }
 
-/* CONTROLS */
+/* AI MOVEMENT */
+
+static float approach(float current,float target,float amount)
+{
+    float difference=target-current;
+
+    if(difference>amount) return current+amount;
+    if(difference< -amount) return current-amount;
+
+    return target;
+}
+
+static void updateAI(void)
+{
+    int i;
+    float targetX=ballX;
+    float targetZ=ballZ;
+
+    /* Blue teammates move into supporting positions. */
+    for(i=0;i<10;i++) {
+        float desiredX=blue[i].homeX;
+        float desiredZ=blue[i].homeZ;
+
+        /* Teammates shift towards the ball. */
+        desiredX+=(targetX-blue[i].homeX)*0.16f;
+        desiredZ+=(targetZ-blue[i].homeZ)*0.12f;
+
+        /* Keep the goalkeeper close to the goal. */
+        if(i==0) {
+            desiredX=blue[i].homeX+(targetX*0.12f);
+            desiredZ=14.0f;
+        }
+
+        blue[i].x=approach(blue[i].x,desiredX,0.035f);
+        blue[i].z=approach(blue[i].z,desiredZ,0.035f);
+    }
+
+    /* Red opponents move towards the ball. */
+    for(i=0;i<11;i++) {
+        float desiredX=red[i].homeX;
+        float desiredZ=red[i].homeZ;
+
+        float dx=targetX-red[i].x;
+        float dz=targetZ-red[i].z;
+        float distance=sqrtf(dx*dx+dz*dz);
+
+        if(i==0) {
+            /* Goalkeeper stays near the goal. */
+            desiredX=red[i].homeX+targetX*0.12f;
+            desiredZ=-14.0f;
+        }
+        else if(distance<13.0f) {
+            /* Defenders and midfielders close down the ball. */
+            desiredX=targetX;
+            desiredZ=targetZ;
+        }
+
+        red[i].x=approach(red[i].x,desiredX,0.045f);
+        red[i].z=approach(red[i].z,desiredZ,0.045f);
+    }
+}
+
+/* MATCH CONTROLS */
 
 static void updateMatch(void)
 {
     SceCtrlData pad;
     float speed=0.12f;
-    float ax, ay;
+    float ax,ay;
 
     sceCtrlPeekBufferPositive(&pad,1);
 
-    if(pad.Buttons & PSP_CTRL_LEFT)  playerX-=speed;
-    if(pad.Buttons & PSP_CTRL_RIGHT) playerX+=speed;
-    if(pad.Buttons & PSP_CTRL_UP)    playerZ-=speed;
-    if(pad.Buttons & PSP_CTRL_DOWN)  playerZ+=speed;
+    if(pad.Buttons&PSP_CTRL_LEFT) playerX-=speed;
+    if(pad.Buttons&PSP_CTRL_RIGHT) playerX+=speed;
+    if(pad.Buttons&PSP_CTRL_UP) playerZ-=speed;
+    if(pad.Buttons&PSP_CTRL_DOWN) playerZ+=speed;
 
     ax=((int)pad.Lx-128)/127.0f;
     ay=((int)pad.Ly-128)/127.0f;
@@ -437,16 +522,18 @@ static void updateMatch(void)
     if(fabsf(ax)>0.18f) playerX+=ax*speed;
     if(fabsf(ay)>0.18f) playerZ+=ay*speed;
 
-    if(playerX < -9.0f) playerX=-9.0f;
-    if(playerX > 9.0f) playerX=9.0f;
-    if(playerZ < -14.5f) playerZ=-14.5f;
-    if(playerZ > 14.5f) playerZ=14.5f;
+    if(playerX< -9) playerX=-9;
+    if(playerX>9) playerX=9;
+    if(playerZ< -14.5f) playerZ=-14.5f;
+    if(playerZ>14.5f) playerZ=14.5f;
 
     if(passCooldown>0) passCooldown--;
 
-    if((pad.Buttons & PSP_CTRL_CROSS) &&
-       !(previousButtons & PSP_CTRL_CROSS) &&
+    /* X button kicks the ball forward. */
+    if((pad.Buttons&PSP_CTRL_CROSS) &&
+       !(previousButtons&PSP_CTRL_CROSS) &&
        !ballFree) {
+
         ballFree=1;
         passCooldown=18;
         ballX=playerX;
@@ -460,14 +547,16 @@ static void updateMatch(void)
     if(!ballFree) {
         ballX=playerX;
         ballZ=playerZ-0.42f;
-    } else {
+    }
+    else {
         ballX+=ballVX;
         ballZ+=ballVZ;
+
         ballVX*=0.995f;
         ballVZ*=0.995f;
 
-        if(ballZ < -15.0f || ballZ > 15.0f ||
-           ballX < -9.5f || ballX > 9.5f) {
+        if(ballZ< -15 || ballZ>15 ||
+           ballX< -9.5f || ballX>9.5f) {
             ballFree=0;
         }
 
@@ -477,13 +566,19 @@ static void updateMatch(void)
             ballFree=0;
         }
     }
+
+    updateAI();
 }
+
+/* MAIN GAME */
 
 int main(void)
 {
     ScePspFVector3 camera={0.0f,29.0f,44.0f};
     ScePspFVector3 target={0.0f,2.0f,0.0f};
     ScePspFVector3 up={0.0f,1.0f,0.0f};
+
+    int i;
 
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
@@ -494,14 +589,17 @@ int main(void)
     sceGuDrawBuffer(GU_PSM_8888,(void*)0,BW);
     sceGuDispBuffer(W,H,(void*)FRAME_SIZE,BW);
     sceGuDepthBuffer((void*)(2*FRAME_SIZE),BW);
+
     sceGuOffset(2048-W/2,2048-H/2);
     sceGuViewport(2048,2048,W,H);
     sceGuDepthRange(65535,0);
     sceGuScissor(0,0,W,H);
+
     sceGuEnable(GU_SCISSOR_TEST);
     sceGuDisable(GU_CULL_FACE);
     sceGuEnable(GU_DEPTH_TEST);
     sceGuDepthFunc(GU_GEQUAL);
+
     sceGuClearColor(0xFF202020);
     sceGuClearDepth(0);
     sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
@@ -513,6 +611,7 @@ int main(void)
 
     for(;;) {
         updateMatch();
+
         sceGuStart(GU_DIRECT,list);
 
         sceGuClearColor(0xFF202020);
@@ -541,48 +640,19 @@ int main(void)
         drawBoards();
         drawTechnical();
 
-        /* 4-3-3 VS 4-3-3: 22 PLAYERS */
+        /* Ten blue AI teammates. */
+        for(i=0;i<10;i++) {
+            unsigned int kit=(i==0)?0xFF202080:BLUE;
+            drawPlayer(blue[i].x,blue[i].z,kit,0);
+        }
 
-        {
-            typedef struct { float x,z; } PlayerSpot;
+        /* User-controlled blue player. */
+        drawPlayer(playerX,playerZ,BLUE,1);
 
-            /* Ten blue teammates. The controlled player is the
-               eleventh blue player, playing central midfield. */
-            static const PlayerSpot blueTeamMates[10]={
-                { 0.0f, 14.3f },
-                {-7.0f, 10.0f }, {-2.3f, 11.0f },
-                { 2.3f, 11.0f }, { 7.0f, 10.0f },
-                {-5.0f,  5.0f }, { 5.0f,  5.0f },
-                {-6.0f, -3.0f }, { 0.0f, -5.0f },
-                { 6.0f, -3.0f }
-            };
-
-            /* Eleven red opponents. */
-            static const PlayerSpot redTeam[11]={
-                { 0.0f, -14.3f },
-                {-7.0f, -10.0f }, {-2.3f, -11.0f },
-                { 2.3f, -11.0f }, { 7.0f, -10.0f },
-                {-5.0f, -4.0f }, { 0.0f, -3.0f },
-                { 5.0f, -4.0f },
-                {-6.0f,  2.0f }, { 0.0f,  4.0f },
-                { 6.0f,  2.0f }
-            };
-
-            int i;
-
-            for(i=0;i<10;i++) {
-                unsigned int kit=(i==0)?0xFF202080:0xFF2020D8;
-                drawPlayer(blueTeamMates[i].x,
-                           blueTeamMates[i].z,kit,0);
-            }
-
-            drawPlayer(playerX,playerZ,0xFF2020D8,1);
-
-            for(i=0;i<11;i++) {
-                unsigned int kit=(i==0)?0xFF20A020:0xFFD02020;
-                drawPlayer(redTeam[i].x,
-                           redTeam[i].z,kit,0);
-            }
+        /* Eleven red AI opponents. */
+        for(i=0;i<11;i++) {
+            unsigned int kit=(i==0)?0xFF20A020:RED;
+            drawPlayer(red[i].x,red[i].z,kit,0);
         }
 
         drawBall(ballX,ballZ);
@@ -599,5 +669,6 @@ int main(void)
 
     sceGuTerm();
     sceKernelExitGame();
+
     return 0;
 }
