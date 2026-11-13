@@ -12,6 +12,7 @@ PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 #define W 480
 #define H 272
 #define BW 512
+#define FRAME_SIZE (BW * H * 4)
 #define WHITE 0xFFFFFFFF
 #define BLUE 0xFF2020D8
 #define RED  0xFFD02020
