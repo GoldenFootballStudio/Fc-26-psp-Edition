@@ -899,4 +899,235 @@ static void updateMatch(void)
             }
         }
 
-        /*
+        
+        /* X: short pass. */
+        else if(pressed & PSP_CTRL_CROSS) {
+            int target=findPassTarget(controlled,0,0);
+            if(target>=0) {
+                kickToPlayer(controlled,target,0.32f);
+                passCooldown=20;
+            }
+        }
+
+        /* Square + Triangle: chip shot. */
+        else if((pressed & PSP_CTRL_SQUARE) &&
+                (held & PSP_CTRL_TRIANGLE)) {
+            shootBall(1,1,controlled);
+            passCooldown=35;
+        }
+
+        /* Square + R: powerful shot. */
+        else if((pressed & PSP_CTRL_SQUARE) &&
+                (held & PSP_CTRL_RTRIGGER)) {
+            shootBall(1,0,controlled);
+            passCooldown=35;
+        }
+
+        /* Square: normal shot. */
+        else if(pressed & PSP_CTRL_SQUARE) {
+            shootBall(0,0,controlled);
+            passCooldown=30;
+        }
+
+        /* Circle + R: driven cross. */
+        else if((pressed & PSP_CTRL_CIRCLE) &&
+                (held & PSP_CTRL_RTRIGGER)) {
+            int target=findPassTarget(controlled,0,1);
+            if(target>=0) {
+                kickToPlayer(controlled,target,0.55f);
+                passCooldown=30;
+            }
+        }
+
+        /* Circle: cross / long pass. */
+        else if(pressed & PSP_CTRL_CIRCLE) {
+            int target=findPassTarget(controlled,0,1);
+            if(target>=0) {
+                kickToPlayer(controlled,target,0.47f);
+                passCooldown=25;
+            }
+        }
+
+        /* Triangle + R: long through ball. */
+        else if((pressed & PSP_CTRL_TRIANGLE) &&
+                (held & PSP_CTRL_RTRIGGER)) {
+            int target=findPassTarget(controlled,0,1);
+            if(target>=0) {
+                kickToPlayer(controlled,target,0.52f);
+                passCooldown=30;
+            }
+        }
+
+        /* Triangle: through ball. */
+        else if(pressed & PSP_CTRL_TRIANGLE) {
+            int target=findPassTarget(controlled,0,1);
+            if(target>=0) {
+                kickToPlayer(controlled,target,0.40f);
+                passCooldown=25;
+            }
+        }
+    }
+
+    /* DEFENDING: RED HAS THE BALL. */
+    else if(ballOwner>=11 && ballOwner<22) {
+        if(pressed & PSP_CTRL_TRIANGLE)
+            goalkeeperRush();
+
+        /* Square: sliding tackle. */
+        if(pressed & PSP_CTRL_SQUARE)
+            attemptTackle(1);
+
+        /* Circle: standing tackle. */
+        if(pressed & PSP_CTRL_CIRCLE)
+            attemptTackle(0);
+
+        /* X: pressure / contain. */
+        if(held & PSP_CTRL_CROSS) {
+            float tx=ballX-p->x;
+            float tz=ballZ-p->z;
+            float d=sqrtf(tx*tx+tz*tz);
+
+            if(d>0.1f) {
+                p->x+=tx/d*0.055f;
+                p->z+=tz/d*0.055f;
+            }
+
+            if(d<1.35f && tackleCooldown==0)
+                attemptTackle(0);
+        }
+
+        /* X + R: sprint pressure. */
+        if((held & PSP_CTRL_CROSS) &&
+           (held & PSP_CTRL_RTRIGGER)) {
+            float tx=ballX-p->x;
+            float tz=ballZ-p->z;
+            float d=sqrtf(tx*tx+tz*tz);
+
+            if(d>0.1f) {
+                p->x+=tx/d*0.10f;
+                p->z+=tz/d*0.10f;
+            }
+
+            if(d<1.7f && tackleCooldown==0)
+                attemptTackle(0);
+        }
+    }
+
+    /* X while ball is loose: chase and collect. */
+    if(ballOwner<0 && (held & PSP_CTRL_CROSS)) {
+        float tx=ballX-p->x;
+        float tz=ballZ-p->z;
+        float d=sqrtf(tx*tx+tz*tz);
+
+        if(d>0.1f) {
+            p->x+=tx/d*0.06f;
+            p->z+=tz/d*0.06f;
+        }
+    }
+
+    updateAI();
+    updateBall();
+
+    previousButtons=held;
+}
+
+/* MAIN */
+int main(void)
+{
+    ScePspFVector3 camera={0.0f,29.0f,44.0f};
+    ScePspFVector3 target={0.0f,2.0f,0.0f};
+    ScePspFVector3 up={0.0f,1.0f,0.0f};
+    int i;
+
+    setupTeams();
+
+    sceCtrlSetSamplingCycle(0);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+
+    sceGuInit();
+    sceGuStart(GU_DIRECT,list);
+
+    sceGuDrawBuffer(GU_PSM_8888,(void*)0,BW);
+    sceGuDispBuffer(W,H,(void*)FRAME_SIZE,BW);
+    sceGuDepthBuffer((void*)(2*FRAME_SIZE),BW);
+    sceGuOffset(2048-W/2,2048-H/2);
+    sceGuViewport(2048,2048,W,H);
+    sceGuDepthRange(65535,0);
+    sceGuScissor(0,0,W,H);
+
+    sceGuEnable(GU_SCISSOR_TEST);
+    sceGuDisable(GU_CULL_FACE);
+    sceGuEnable(GU_DEPTH_TEST);
+    sceGuDepthFunc(GU_GEQUAL);
+
+    sceGuClearColor(0xFF202020);
+    sceGuClearDepth(0);
+    sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
+
+    sceGuFinish();
+    sceGuSync(0,0);
+
+    sceDisplayWaitVblankStart();
+    sceGuDisplay(GU_TRUE);
+
+    for(;;) {
+        updateMatch();
+
+        sceGuStart(GU_DIRECT,list);
+
+        sceGuClearColor(0xFF202020);
+        sceGuClearDepth(0);
+        sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
+
+        sceGuEnable(GU_DEPTH_TEST);
+
+        sceGumMatrixMode(GU_PROJECTION);
+        sceGumLoadIdentity();
+        sceGumPerspective(48.0f,(float)W/H,1.0f,200.0f);
+
+        sceGumMatrixMode(GU_VIEW);
+        sceGumLoadIdentity();
+        sceGumLookAt(&camera,&target,&up);
+
+        sceGumMatrixMode(GU_MODEL);
+        sceGumLoadIdentity();
+
+        drawStands();
+        drawCrowd();
+        drawLights();
+        drawPitch();
+        drawGoals();
+        drawCorners();
+        drawBoards();
+        drawTechnical();
+
+        /* Red AI team. */
+        for(i=0;i<11;i++) {
+            unsigned int kit=(i==0)?0xFF202020:RED;
+            drawPlayer(red[i].x,red[i].z,kit,0);
+        }
+
+        /* Blue team: user-controlled player highlighted. */
+        for(i=0;i<11;i++) {
+            unsigned int kit=(i==0)?0xFF20A020:BLUE;
+            drawPlayer(blue[i].x,blue[i].z,kit,i==controlled);
+        }
+
+        drawBall(ballX,ballZ);
+        drawScoreboard();
+
+        sceGuFinish();
+        sceGuSync(0,0);
+
+        sceDisplayWaitVblankStart();
+        sceGuSwapBuffers();
+
+        frameCount++;
+    }
+
+    sceGuTerm();
+    sceKernelExitGame();
+
+    return 0;
+}
+
