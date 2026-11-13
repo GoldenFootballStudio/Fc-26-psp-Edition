@@ -1,4 +1,3 @@
-
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
@@ -13,11 +12,9 @@ PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 #define H 272
 #define BW 512
 #define FRAME_SIZE (BW * H * 4)
-
 #define WHITE 0xFFFFFFFF
 #define BLUE  0xFF2020D8
 #define RED   0xFFD02020
-
 #define RED_ID(i) (11+(i))
 #define IS_RED(i) ((i)>=11 && (i)<22)
 
@@ -153,31 +150,48 @@ static void drawPitch(void)
     line(-5.5f,0.06f,10,5.5f,0.06f,10,WHITE);
 }
 
-static void drawStands(void)
+static void drawStadium(void)
 {
-    int s,r;
+    int s,r,n;
+
+    unsigned int crowd[6]={
+        0xFFE03030,0xFF3030D0,WHITE,
+        0xFF20A040,0xFF20A0E0,0xFF303030
+    };
 
     for(s=-1;s<=1;s+=2) {
         for(r=0;r<8;r++) {
-            float inner=11.3f+r*0.8f;
-            float outer=inner+0.8f;
+            float a=11.3f+r*0.8f;
+            float b=a+0.8f;
             float y=0.45f+r*0.55f;
 
-            quad(s*inner,y,-20,s*outer,y,-20,
-                 s*inner,y,20,s*outer,y,20,
+            quad(s*a,y,-20,s*b,y,-20,
+                 s*a,y,20,s*b,y,20,
                  (r%2)?0xFF3030B0:0xFF404080);
         }
-    }
 
-    for(s=-1;s<=1;s+=2) {
         for(r=0;r<7;r++) {
-            float inner=17.4f+r*0.75f;
-            float outer=inner+0.75f;
+            float a=17.4f+r*0.75f;
+            float b=a+0.75f;
             float y=0.45f+r*0.55f;
 
-            quad(-12,y,s*inner,12,y,s*inner,
-                 -12,y,s*outer,12,y,s*outer,
+            quad(-12,y,s*a,12,y,s*a,
+                 -12,y,s*b,12,y,s*b,
                  (r%2)?0xFF3030B0:0xFF404080);
+        }
+
+        for(r=0;r<7;r++) {
+            for(n=0;n<22;n++) {
+                float z=-18+n*1.65f;
+                float x=s*(11.7f+r*0.8f);
+                float y=0.65f+r*0.55f;
+                float bob=0.05f*sinf(frameCount*0.04f+n+r);
+
+                quad(x,y+bob,z,x,y+bob,z+0.35f,
+                     x,y+0.3f+bob,z,
+                     x,y+0.3f+bob,z+0.35f,
+                     crowd[(n+r)%6]);
+            }
         }
     }
 
@@ -186,43 +200,13 @@ static void drawStands(void)
              s*16,5.2f,21,s*19,5.2f,21,
              0xFF555555);
     }
-}
-
-static void drawCrowd(void)
-{
-    int s,r,n;
-    unsigned int colors[6]={
-        0xFFE03030,0xFF3030D0,WHITE,
-        0xFF20A040,0xFF20A0E0,0xFF303030
-    };
 
     for(s=-1;s<=1;s+=2) {
-        for(r=0;r<7;r++) {
-            for(n=0;n<22;n++) {
-                float z=-18+n*1.65f;
-                float x=s*(11.7f+r*0.8f);
-                float y=0.65f+r*0.55f;
-                float b=0.06f*sinf(frameCount*0.04f+n+r);
-
-                quad(x,y+b,z,x,y+b,z+0.35f,
-                     x,y+0.3f+b,z,x,y+0.3f+b,z+0.35f,
-                     colors[(n+r)%6]);
-            }
-        }
-    }
-}
-
-static void drawLights(void)
-{
-    int sx,sz;
-
-    for(sx=-1;sx<=1;sx+=2) {
-        for(sz=-1;sz<=1;sz+=2) {
-            float x=sx*14.5f;
-            float z=sz*19.5f;
+        for(r=-1;r<=1;r+=2) {
+            float x=s*14.5f;
+            float z=r*19.5f;
 
             line(x,0,z,x,9,z,0xFFAAAAAA);
-            line(x,9,z,x+sx*0.5f,9.5f,z,0xFFAAAAAA);
 
             quad(x-0.65f,9.2f,z-0.3f,
                  x+0.65f,9.2f,z-0.3f,
@@ -257,23 +241,6 @@ static void drawGoals(void)
     }
 }
 
-static void drawCorners(void)
-{
-    int sx,sz;
-
-    for(sx=-1;sx<=1;sx+=2) {
-        for(sz=-1;sz<=1;sz+=2) {
-            float x=sx*9.8f;
-            float z=sz*15.8f;
-
-            line(x,0.05f,z,x,1.8f,z,WHITE);
-            triangle(x,1.8f,z,
-                     x+sx*0.8f,1.55f,z,
-                     x,1.25f,z,0xFF2020E8);
-        }
-    }
-}
-
 static void drawBoards(void)
 {
     int i;
@@ -290,24 +257,7 @@ static void drawBoards(void)
     }
 }
 
-static void drawTechnical(void)
-{
-    int s;
-
-    for(s=-1;s<=1;s+=2) {
-        float x=s*12.0f;
-
-        line(x,0.08f,-5,x,0.08f,5,WHITE);
-        line(x,0.08f,-5,x+s*2,0.08f,-5,WHITE);
-        line(x,0.08f,5,x+s*2,0.08f,5,WHITE);
-
-        quad(x+s*0.2f,1.8f,-4,x+s*0.2f,1.8f,4,
-             x+s*2,1.8f,-4,x+s*2,1.8f,4,
-             0xFF505050);
-    }
-}
-
-/* PLAYERS AND BALL */
+/* PLAYERS */
 
 static void drawPlayer(float x,float z,
                        unsigned int kit,int selected)
@@ -413,11 +363,12 @@ static void setupTeams(void)
     controlled=9;
     ballOwner=9;
     ballMoving=0;
+    passTarget=-1;
     ballX=blue[9].x;
     ballZ=blue[9].z;
 }
 
-/* KICK-OFF */
+/* KICKOFF */
 
 static void kickoff(int blueStarts)
 {
@@ -442,15 +393,14 @@ static void kickoff(int blueStarts)
         blue[9].x=0;
         blue[9].z=0;
         ballOwner=9;
-        ballX=0;
-        ballZ=0;
     } else {
         red[9].x=0;
         red[9].z=0;
         ballOwner=RED_ID(9);
-        ballX=0;
-        ballZ=0;
     }
+
+    ballX=0;
+    ballZ=0;
 }
 
 /* PASSING */
@@ -515,19 +465,21 @@ static void kickToPlayer(int passer,int target,float power)
     passTarget=target;
 }
 
-/* SHOOTING: BLUE ATTACKS TOWARD NEGATIVE Z */
+/* SHOOTING */
 
 static void shootBall(int power,int chip,int shooter)
 {
     Player *p=getPlayer(shooter);
-    float aimX=0.0f;
     float direction=IS_RED(shooter)?1.0f:-1.0f;
+
+    float aimX=0.0f;
 
     if(p->x>0.8f) aimX=-0.12f;
     if(p->x<-0.8f) aimX=0.12f;
 
     ballX=p->x;
     ballZ=p->z+direction*0.45f;
+
     ballVX=aimX*(chip?0.7f:1.0f);
     ballVZ=direction*(power?0.78f:0.59f);
 
@@ -620,11 +572,17 @@ static void updateAI(void)
         float d1=distance2(blue[i].x,blue[i].z,ballX,ballZ);
         float d2=distance2(red[i].x,red[i].z,ballX,ballZ);
 
-        if(d1<db) { db=d1; nearestBlue=i; }
-        if(d2<dr) { dr=d2; nearestRed=i; }
+        if(d1<db) {
+            db=d1;
+            nearestBlue=i;
+        }
+
+        if(d2<dr) {
+            dr=d2;
+            nearestRed=i;
+        }
     }
 
-    /* Blue teammates support the controlled player. */
     for(i=0;i<11;i++) {
         float tx,tz;
 
@@ -633,19 +591,10 @@ static void updateAI(void)
         tx=blue[i].homeX+ballX*0.10f;
         tz=blue[i].homeZ+ballZ*0.08f;
 
-        if(ballOwner>=11 && ballOwner<22) {
+        if(IS_RED(ballOwner)) {
             if(i==nearestBlue || i==(nearestBlue+1)%11) {
                 tx=ballX;
                 tz=ballZ;
-            }
-        }
-
-        if(ballOwner>=0 && !IS_RED(ballOwner)) {
-            if(ballOwner==i) {
-                tz-=0.045f;
-            } else {
-                tx+=(ballX-tx)*0.10f;
-                tz+=(ballZ-tz)*0.08f;
             }
         }
 
@@ -653,7 +602,6 @@ static void updateAI(void)
         blue[i].z+=(clampf(tz,-14.5f,14.5f)-blue[i].z)*0.018f;
     }
 
-    /* Red opponents press, mark and support attacks. */
     for(i=0;i<11;i++) {
         float tx,tz;
 
@@ -667,7 +615,7 @@ static void updateAI(void)
             }
         }
 
-        if(ballOwner>=11 && ballOwner<22) {
+        if(IS_RED(ballOwner)) {
             if(i==ballOwner-11) {
                 tz+=0.045f;
             } else if(i>=5) {
@@ -679,7 +627,6 @@ static void updateAI(void)
         red[i].z+=(clampf(tz,-14.5f,14.5f)-red[i].z)*0.016f;
     }
 
-    /* Goalkeepers stay on their own goal lines. */
     blue[0].x+=(clampf(ballX,-2.5f,2.5f)-blue[0].x)*0.025f;
     blue[0].z+=(-14.3f-blue[0].z)*0.025f;
 
@@ -687,7 +634,7 @@ static void updateAI(void)
     red[0].z+=(14.3f-red[0].z)*0.025f;
 }
 
-/* BALL PHYSICS */
+/* BALL PHYSICS AND AUTOMATIC SWITCHING */
 
 static void updateBall(void)
 {
@@ -714,6 +661,11 @@ static void updateBall(void)
 
             if(distance2(target->x,target->z,ballX,ballZ)<0.55f) {
                 ballOwner=passTarget;
+
+                if(ballOwner<11) {
+                    controlled=ballOwner;
+                }
+
                 ballMoving=0;
                 passTarget=-1;
                 ballVX=0;
@@ -721,14 +673,12 @@ static void updateBall(void)
             }
         }
 
-        /* Blue scores at the negative-Z goal. */
         if(ballZ<-16.2f && fabsf(ballX)<3.66f) {
             blueScore++;
             kickoff(0);
             return;
         }
 
-        /* Red scores at the positive-Z goal. */
         if(ballZ>16.2f && fabsf(ballX)<3.66f) {
             redScore++;
             kickoff(1);
@@ -753,7 +703,6 @@ static void updateBall(void)
         }
     }
 
-    /* Loose-ball collection. */
     if(!ballMoving && ballOwner<0) {
         for(i=0;i<22;i++) {
             Player *p=getPlayer(i);
@@ -767,6 +716,11 @@ static void updateBall(void)
 
         if(best>=0 && bestD<0.75f) {
             ballOwner=best;
+
+            if(best<11) {
+                controlled=best;
+            }
+
             ballMoving=0;
         }
     }
@@ -795,6 +749,7 @@ static void goalkeeperRush(void)
         ballVX=0;
         ballVZ=0;
         passTarget=-1;
+        controlled=0;
     }
 }
 
@@ -827,9 +782,11 @@ static void updateMatch(void)
     if(held & PSP_CTRL_RTRIGGER)
         speed=0.20f;
 
+    if(controlled<0 || controlled>=11)
+        controlled=9;
+
     p=&blue[controlled];
 
-    /* D-pad and analog movement. */
     if(held & PSP_CTRL_LEFT)  dx-=1;
     if(held & PSP_CTRL_RIGHT) dx+=1;
     if(held & PSP_CTRL_UP)    dz-=1;
@@ -841,21 +798,9 @@ static void updateMatch(void)
     if(fabsf(ax)>0.18f) dx+=ax;
     if(fabsf(ay)>0.18f) dz+=ay;
 
-    if((held & PSP_CTRL_RTRIGGER) &&
-       (held & PSP_CTRL_LTRIGGER) &&
-       ballOwner==controlled &&
-       (fabsf(dx)+fabsf(dz)>0.1f)) {
-        p->x+=dx*speed*1.5f;
-        p->z+=dz*speed*1.5f;
-    } else {
-        p->x+=dx*speed;
-        p->z+=dz*speed;
-    }
+    p->x=clampf(p->x+dx*speed,-9.0f,9.0f);
+    p->z=clampf(p->z+dz*speed,-14.5f,14.5f);
 
-    p->x=clampf(p->x,-9.0f,9.0f);
-    p->z=clampf(p->z,-14.5f,14.5f);
-
-    /* L switches player. */
     if((pressed & PSP_CTRL_LTRIGGER) &&
        !(held & PSP_CTRL_CROSS)) {
         if(fabsf(dx)+fabsf(dz)>0.2f)
@@ -864,20 +809,14 @@ static void updateMatch(void)
             switchNearestPlayer();
     }
 
-    if((held & PSP_CTRL_LTRIGGER) &&
-       (pressed & PSP_CTRL_CROSS) &&
-       ballOwner>=11) {
-        switchNearestPlayer();
-    }
-
     secondPress=((held & PSP_CTRL_LTRIGGER) &&
                  (held & PSP_CTRL_RTRIGGER))?1:0;
 
     /* ATTACKING: BLUE HAS THE BALL. */
+
     if(ballOwner==controlled &&
        !ballMoving && passCooldown==0) {
 
-        /* X + Triangle: one-two pass. */
         if((pressed & PSP_CTRL_CROSS) &&
            (held & PSP_CTRL_TRIANGLE)) {
             int target=findPassTarget(controlled,0,1);
@@ -888,7 +827,6 @@ static void updateMatch(void)
             }
         }
 
-        /* X + R: pass and forward run. */
         else if((pressed & PSP_CTRL_CROSS) &&
                 (held & PSP_CTRL_RTRIGGER)) {
             int target=findPassTarget(controlled,0,0);
@@ -899,68 +837,64 @@ static void updateMatch(void)
             }
         }
 
-        
-        /* X: short pass. */
         else if(pressed & PSP_CTRL_CROSS) {
             int target=findPassTarget(controlled,0,0);
+
             if(target>=0) {
                 kickToPlayer(controlled,target,0.32f);
                 passCooldown=20;
             }
         }
 
-        /* Square + Triangle: chip shot. */
         else if((pressed & PSP_CTRL_SQUARE) &&
                 (held & PSP_CTRL_TRIANGLE)) {
             shootBall(1,1,controlled);
             passCooldown=35;
         }
 
-        /* Square + R: powerful shot. */
         else if((pressed & PSP_CTRL_SQUARE) &&
                 (held & PSP_CTRL_RTRIGGER)) {
             shootBall(1,0,controlled);
             passCooldown=35;
         }
 
-        /* Square: normal shot. */
         else if(pressed & PSP_CTRL_SQUARE) {
             shootBall(0,0,controlled);
             passCooldown=30;
         }
 
-        /* Circle + R: driven cross. */
         else if((pressed & PSP_CTRL_CIRCLE) &&
                 (held & PSP_CTRL_RTRIGGER)) {
             int target=findPassTarget(controlled,0,1);
+
             if(target>=0) {
                 kickToPlayer(controlled,target,0.55f);
                 passCooldown=30;
             }
         }
 
-        /* Circle: cross / long pass. */
         else if(pressed & PSP_CTRL_CIRCLE) {
             int target=findPassTarget(controlled,0,1);
+
             if(target>=0) {
                 kickToPlayer(controlled,target,0.47f);
                 passCooldown=25;
             }
         }
 
-        /* Triangle + R: long through ball. */
         else if((pressed & PSP_CTRL_TRIANGLE) &&
                 (held & PSP_CTRL_RTRIGGER)) {
             int target=findPassTarget(controlled,0,1);
+
             if(target>=0) {
                 kickToPlayer(controlled,target,0.52f);
                 passCooldown=30;
             }
         }
 
-        /* Triangle: through ball. */
         else if(pressed & PSP_CTRL_TRIANGLE) {
             int target=findPassTarget(controlled,0,1);
+
             if(target>=0) {
                 kickToPlayer(controlled,target,0.40f);
                 passCooldown=25;
@@ -969,19 +903,17 @@ static void updateMatch(void)
     }
 
     /* DEFENDING: RED HAS THE BALL. */
-    else if(ballOwner>=11 && ballOwner<22) {
+
+    else if(IS_RED(ballOwner)) {
         if(pressed & PSP_CTRL_TRIANGLE)
             goalkeeperRush();
 
-        /* Square: sliding tackle. */
         if(pressed & PSP_CTRL_SQUARE)
             attemptTackle(1);
 
-        /* Circle: standing tackle. */
         if(pressed & PSP_CTRL_CIRCLE)
             attemptTackle(0);
 
-        /* X: pressure / contain. */
         if(held & PSP_CTRL_CROSS) {
             float tx=ballX-p->x;
             float tz=ballZ-p->z;
@@ -996,7 +928,6 @@ static void updateMatch(void)
                 attemptTackle(0);
         }
 
-        /* X + R: sprint pressure. */
         if((held & PSP_CTRL_CROSS) &&
            (held & PSP_CTRL_RTRIGGER)) {
             float tx=ballX-p->x;
@@ -1013,7 +944,6 @@ static void updateMatch(void)
         }
     }
 
-    /* X while ball is loose: chase and collect. */
     if(ballOwner<0 && (held & PSP_CTRL_CROSS)) {
         float tx=ballX-p->x;
         float tz=ballZ-p->z;
@@ -1032,6 +962,7 @@ static void updateMatch(void)
 }
 
 /* MAIN */
+
 int main(void)
 {
     ScePspFVector3 camera={0.0f,29.0f,44.0f};
@@ -1092,14 +1023,10 @@ int main(void)
         sceGumMatrixMode(GU_MODEL);
         sceGumLoadIdentity();
 
-        drawStands();
-        drawCrowd();
-        drawLights();
+        drawStadium();
         drawPitch();
         drawGoals();
-        drawCorners();
         drawBoards();
-        drawTechnical();
 
         /* Red AI team. */
         for(i=0;i<11;i++) {
@@ -1107,7 +1034,7 @@ int main(void)
             drawPlayer(red[i].x,red[i].z,kit,0);
         }
 
-        /* Blue team: user-controlled player highlighted. */
+        /* Blue user-controlled team. */
         for(i=0;i<11;i++) {
             unsigned int kit=(i==0)?0xFF20A020:BLUE;
             drawPlayer(blue[i].x,blue[i].z,kit,i==controlled);
@@ -1130,4 +1057,3 @@ int main(void)
 
     return 0;
 }
-
