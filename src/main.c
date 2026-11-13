@@ -6,7 +6,7 @@
 #include <pspctrl.h>
 #include <math.h>
 
-PSP_MODULE_INFO("FC26 PSP Edition",0,1,0);
+PSP_MODULE_INFO("FC26 Playable Prototype",0,1,0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
 
 #define W 480
@@ -86,7 +86,6 @@ static void drawPitch(void)
              2.5f*cosf(b),0.06f,2.5f*sinf(b),WHITE);
     }
 
-    /* Penalty areas */
     line(-5.5f,0.06f,-16,5.5f,0.06f,-16,WHITE);
     line(-5.5f,0.06f,-16,-5.5f,0.06f,-10,WHITE);
     line(5.5f,0.06f,-16,5.5f,0.06f,-10,WHITE);
@@ -97,7 +96,6 @@ static void drawPitch(void)
     line(5.5f,0.06f,16,5.5f,0.06f,10,WHITE);
     line(-5.5f,0.06f,10,5.5f,0.06f,10,WHITE);
 
-    /* Goal areas */
     line(-3,0.07f,-16,3,0.07f,-16,WHITE);
     line(-3,0.07f,-16,-3,0.07f,-13,WHITE);
     line(3,0.07f,-16,3,0.07f,-13,WHITE);
@@ -109,7 +107,7 @@ static void drawPitch(void)
     line(-3,0.07f,13,3,0.07f,13,WHITE);
 }
 
-/* FOUR-SIDED STADIUM SEATING */
+/* STADIUM STANDS */
 
 static void drawStands(void)
 {
@@ -117,7 +115,6 @@ static void drawStands(void)
     unsigned int red=0xFF3030B0;
     unsigned int blue=0xFF404080;
 
-    /* Long-side stands */
     for(s=-1;s<=1;s+=2) {
         for(r=0;r<8;r++) {
             float inner=11.3f+r*0.8f;
@@ -132,7 +129,6 @@ static void drawStands(void)
         }
     }
 
-    /* Stands behind both goals */
     for(s=-1;s<=1;s+=2) {
         for(r=0;r<7;r++) {
             float inner=17.4f+r*0.75f;
@@ -147,7 +143,6 @@ static void drawStands(void)
         }
     }
 
-    /* Narrow roof sections above the side stands */
     for(s=-1;s<=1;s+=2) {
         quad(s*16.0f,5.2f,-21,
              s*19.0f,5.2f,-21,
@@ -156,7 +151,7 @@ static void drawStands(void)
     }
 }
 
-/* SPECTATORS */
+/* CROWD */
 
 static void drawCrowd(void)
 {
@@ -314,7 +309,7 @@ static void drawTechnical(void)
     }
 }
 
-/* SCOREBOARD DIGITS */
+/* SCOREBOARD */
 
 static void digit(float x,float y,float z,int number)
 {
@@ -342,13 +337,11 @@ static void drawScoreboard(void)
     int minutes=(frameCount/3600)%100;
     int seconds=(frameCount/60)%60;
 
-    /* Board body */
     quad(-5.5f,9.0f,-22,
           5.5f,9.0f,-22,
          -5.5f,12.5f,-22,
           5.5f,12.5f,-22,0xFF101010);
 
-    /* Team colour panels */
     quad(-5.1f,9.5f,-21.9f,
          -2.5f,9.5f,-21.9f,
          -5.1f,12.0f,-21.9f,
@@ -359,15 +352,127 @@ static void drawScoreboard(void)
          2.5f,12.0f,-21.9f,
          5.1f,12.0f,-21.9f,0xFFFFFFFF);
 
-    /* 0 - 0 score */
     digit(-1.3f,10.0f,-21.8f,0);
     digit(0.2f,10.0f,-21.8f,0);
 
-    /* Clock */
     digit(-1.5f,8.1f,-21.8f,minutes/10);
     digit(-0.6f,8.1f,-21.8f,minutes%10);
     digit(0.6f,8.1f,-21.8f,seconds/10);
     digit(1.5f,8.1f,-21.8f,seconds%10);
+}
+
+/* PLAYERS AND BALL */
+
+static float playerX=0.0f, playerZ=2.0f;
+static float ballX=0.0f, ballZ=1.0f;
+static float ballVX=0.0f, ballVZ=0.0f;
+static int ballFree=0;
+static unsigned int previousButtons=0;
+
+static void drawPlayer(float x,float z,unsigned int kit,int controlled)
+{
+    unsigned int shorts=0xFF202020;
+    unsigned int skin=0xFFB87945;
+    float bob=0.035f*sinf(frameCount*0.18f+
+                          (controlled?0.0f:1.7f));
+
+    line(x-0.22f,0.12f,z,
+         x-0.25f,0.78f+bob,z,0xFF101010);
+    line(x+0.22f,0.12f,z,
+         x+0.25f,0.78f+bob,z,0xFF101010);
+
+    line(x-0.25f,0.78f+bob,z,
+         x-0.18f,1.12f+bob,z,shorts);
+    line(x+0.25f,0.78f+bob,z,
+         x+0.18f,1.12f+bob,z,shorts);
+
+    quad(x-0.34f,1.05f+bob,z,
+         x+0.34f,1.05f+bob,z,
+         x-0.29f,1.95f+bob,z,
+         x+0.29f,1.95f+bob,z,kit);
+
+    line(x-0.30f,1.82f+bob,z,
+         x-0.48f,1.18f+bob,z,skin);
+    line(x+0.30f,1.82f+bob,z,
+         x+0.48f,1.18f+bob,z,skin);
+
+    quad(x-0.18f,1.95f+bob,z,
+         x+0.18f,1.95f+bob,z,
+         x-0.18f,2.28f+bob,z,
+         x+0.18f,2.28f+bob,z,skin);
+
+    if(controlled) {
+        line(x-0.55f,2.48f+bob,z,
+             x+0.55f,2.48f+bob,z,0xFFFFFF00);
+    }
+}
+
+static void drawBall(float x,float z)
+{
+    float y=0.18f+0.035f*sinf(frameCount*0.25f);
+    float r=0.19f;
+    unsigned int white=0xFFFFFFFF;
+    unsigned int black=0xFF202020;
+
+    triangle(x,y+r,z,x-r,y,z,x,y,z-r,white);
+    triangle(x,y+r,z,x,y,z-r,x+r,y,z,white);
+    triangle(x,y+r,z,x+r,y,z,x,y,z+r,black);
+    triangle(x,y+r,z,x,y,z+r,x-r,y,z,white);
+    triangle(x,y-r,z,x,y,z-r,x-r,y,z,black);
+    triangle(x,y-r,z,x+r,y,z,x,y,z-r,white);
+    triangle(x,y-r,z,x,y,z+r,x+r,y,z,white);
+    triangle(x,y-r,z,x-r,y,z,x,y,z+r,white);
+}
+
+static void updateMatch(void)
+{
+    SceCtrlData pad;
+    float speed=0.12f;
+
+    sceCtrlPeekBufferPositive(&pad,1);
+
+    if(pad.Buttons & PSP_CTRL_LEFT)  playerX-=speed;
+    if(pad.Buttons & PSP_CTRL_RIGHT) playerX+=speed;
+    if(pad.Buttons & PSP_CTRL_UP)    playerZ-=speed;
+    if(pad.Buttons & PSP_CTRL_DOWN)  playerZ+=speed;
+
+    if(playerX < -9.0f) playerX=-9.0f;
+    if(playerX > 9.0f) playerX=9.0f;
+    if(playerZ < -14.5f) playerZ=-14.5f;
+    if(playerZ > 14.5f) playerZ=14.5f;
+
+    if((pad.Buttons & PSP_CTRL_CROSS) &&
+       !(previousButtons & PSP_CTRL_CROSS)) {
+        if(!ballFree) {
+            ballFree=1;
+            ballX=playerX;
+            ballZ=playerZ-0.35f;
+            ballVX=0.025f;
+            ballVZ=-0.28f;
+        }
+    }
+
+    previousButtons=pad.Buttons;
+
+    if(!ballFree) {
+        ballX=playerX;
+        ballZ=playerZ-0.42f;
+    } else {
+        ballX+=ballVX;
+        ballZ+=ballVZ;
+        ballVX*=0.992f;
+        ballVZ*=0.992f;
+
+        if(ballZ < -15.0f || ballZ > 15.0f ||
+           ballX < -9.5f || ballX > 9.5f) {
+            ballFree=0;
+        }
+
+        if(fabsf(ballX-playerX)<0.55f &&
+           fabsf(ballZ-playerZ)<0.65f) {
+            ballFree=0;
+        }
+    }
 }
 
 /* MAIN */
@@ -377,6 +482,9 @@ int main(void)
     ScePspFVector3 camera={0.0f,29.0f,44.0f};
     ScePspFVector3 target={0.0f,2.0f,0.0f};
     ScePspFVector3 up={0.0f,1.0f,0.0f};
+
+    sceCtrlSetSamplingCycle(0);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
     sceGuInit();
     sceGuStart(GU_DIRECT,list);
@@ -402,6 +510,7 @@ int main(void)
     sceGuDisplay(GU_TRUE);
 
     for(;;) {
+        updateMatch();
         sceGuStart(GU_DIRECT,list);
 
         sceGuClearColor(0xFF202020);
@@ -429,6 +538,14 @@ int main(void)
         drawCorners();
         drawBoards();
         drawTechnical();
+
+        drawPlayer(playerX,playerZ,0xFF2020D8,1);
+        drawPlayer(-3.0f,-5.0f,0xFF20A020,0);
+        drawPlayer(3.0f,-7.0f,0xFF20A020,0);
+        drawPlayer(-2.5f,7.0f,0xFFD02020,0);
+        drawPlayer(2.8f,9.0f,0xFFD02020,0);
+
+        drawBall(ballX,ballZ);
         drawScoreboard();
 
         sceGuFinish();
