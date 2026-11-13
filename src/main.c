@@ -1,1059 +1,982 @@
+
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
 #include <pspgum.h>
 #include <pspctrl.h>
 #include <math.h>
+#include <stdlib.h>
 
-PSP_MODULE_INFO("FC26 PSP Football", 0, 1, 0);
-PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
+PSP_MODULE_INFO("FC26 PSP EDITION", 0, 1, 0);
+PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 
 #define W 480
 #define H 272
-#define BW 512
-#define FRAME_SIZE (BW * H * 4)
-#define WHITE 0xFFFFFFFF
-#define BLUE  0xFF2020D8
-#define RED   0xFFD02020
-#define RED_ID(i) (11+(i))
-#define IS_RED(i) ((i)>=11 && (i)<22)
+#define PI 3.14159265f
+#define BLUE 0
+#define RED 1
 
 typedef struct {
-    unsigned int color;
-    float x,y,z;
-} Vertex;
-
-typedef struct {
-    float x,z;
-    float homeX,homeZ;
+    float x, y;
+    float hx, hy;
 } Player;
 
+typedef struct {
+    float x, y;
+    float vx, vy;
+} Ball;
+
 static unsigned int __attribute__((aligned(16))) list[262144];
-static unsigned int frameCount=0;
 
-static Player blue[11],red[11];
+static Player blue[11];
+static Player red[11];
+static Ball ball;
 
-static float ballX=0,ballZ=0;
-static float ballVX=0,ballVZ=0;
+static int controlled = 9;
+static int owner = 9;
+static int passTarget = -1;
+static int scoreBlue = 0;
+static int scoreRed = 0;
+static int matchTime = 0;
+static int gameFrames = 0;
+static int tackleCooldown = 0;
+static int secondPress = 0;
+static int lastButtons = 0;
 
-static int ballOwner=9;
-static int ballMoving=0;
-static int passTarget=-1;
-
-static int controlled=9;
-static int passCooldown=0;
-static int tackleCooldown=0;
-
-static int blueScore=0,redScore=0;
-static int paused=0;
-static int secondPress=0;
-static int goalTimer=0;
-static unsigned int previousButtons=0;
-
-static float clampf(float v,float lo,float hi)
+static int clampInt(int v, int lo, int hi)
 {
-    if(v<lo) return lo;
-    if(v>hi) return hi;
+    if(v < lo) return lo;
+    if(v > hi) return hi;
     return v;
 }
 
-static float distance2(float x1,float z1,float x2,float z2)
+static float clampFloat(float v, float lo, float hi)
 {
-    float dx=x1-x2;
-    float dz=z1-z2;
-    return dx*dx+dz*dz;
+    if(v < lo) return lo;
+    if(v > hi) return hi;
+    return v;
+}
+
+static float distance(float x1, float y1, float x2, float y2)
+{
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    return sqrtf(dx * dx + dy * dy);
 }
 
 static Player *getPlayer(int id)
 {
-    if(id>=11) return &red[id-11];
-    return &blue[id];
+    if(id < 11)
+        return &blue[id];
+
+    return &red[id - 11];
 }
 
-static void quad(float x1,float y1,float z1,
-                 float x2,float y2,float z2,
-                 float x3,float y3,float z3,
-                 float x4,float y4,float z4,
-                 unsigned int c)
+static float screenX(float x)
 {
-    Vertex v[4]={
-        {c,x1,y1,z1},{c,x2,y2,z2},
-        {c,x3,y3,z3},{c,x4,y4,z4}
+    return 240.0f + x * 10.5f;
+}
+
+static float screenY(float y)
+{
+    return 136.0f + y * 7.0f;
+}
+
+static void drawRect(float x, float y, float w, float h,
+                     unsigned int color)
+{
+    struct Vertex {
+        unsigned int color;
+        short x, y, z;
     };
 
-    sceGumDrawArray(GU_TRIANGLE_STRIP,
-        GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
-        4,0,v);
+    Vertex *v = (Vertex *)sceGuGetMemory(sizeof(Vertex) * 4);
+
+    v[0].color = color;
+    v[0].x = (short)x;
+    v[0].y = (short)y;
+    v[0].z = 0;
+
+    v[1].color = color;
+    v[1].x = (short)(x + w);
+    v[1].y = (short)y;
+    v[1].z = 0;
+
+    v[2].color = color;
+    v[2].x = (short)x;
+    v[2].y = (short)(y + h);
+    v[2].z = 0;
+
+    v[3].color = color;
+    v[3].x = (short)(x + w);
+    v[3].y = (short)(y + h);
+    v[3].z = 0;
+
+    sceGuDrawArray(GU_TRIANGLE_STRIP,
+        GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+        4, 0, v);
 }
 
-static void line(float x1,float y1,float z1,
-                 float x2,float y2,float z2,
-                 unsigned int c)
+static void drawCircle(float x, float y, float radius,
+                       unsigned int color)
 {
-    Vertex v[2]={{c,x1,y1,z1},{c,x2,y2,z2}};
-
-    sceGumDrawArray(GU_LINES,
-        GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
-        2,0,v);
-}
-
-static void triangle(float x1,float y1,float z1,
-                     float x2,float y2,float z2,
-                     float x3,float y3,float z3,
-                     unsigned int c)
-{
-    Vertex v[3]={
-        {c,x1,y1,z1},{c,x2,y2,z2},{c,x3,y3,z3}
+    struct Vertex {
+        unsigned int color;
+        short x, y, z;
     };
 
-    sceGumDrawArray(GU_TRIANGLES,
-        GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_3D,
-        3,0,v);
-}
+    int i;
+    Vertex *v = (Vertex *)sceGuGetMemory(sizeof(Vertex) * 22);
 
-/* STADIUM */
+    v[0].color = color;
+    v[0].x = (short)x;
+    v[0].y = (short)y;
+    v[0].z = 0;
+
+    for(i = 0; i <= 20; i++)
+    {
+        float a = (float)i * 2.0f * PI / 20.0f;
+
+        v[i + 1].color = color;
+        v[i + 1].x = (short)(x + cosf(a) * radius);
+        v[i + 1].y = (short)(y + sinf(a) * radius);
+        v[i + 1].z = 0;
+    }
+
+    sceGuDrawArray(GU_TRIANGLE_FAN,
+        GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+        22, 0, v);
+}
 
 static void drawPitch(void)
 {
+    unsigned int grass = GU_RGBA(30, 115, 48, 255);
+    unsigned int stripe = GU_RGBA(38, 130, 55, 255);
+    unsigned int white = GU_RGBA(255, 255, 255, 255);
+
     int i;
 
-    for(i=0;i<8;i++) {
-        float z=-16+i*4;
-        unsigned int c=(i%2)?0xFF287A20:0xFF328C25;
+    drawRect(0, 0, W, H, GU_RGBA(12, 25, 35, 255));
 
-        quad(-10,0.02f,z,10,0.02f,z,
-             -10,0.02f,z+4,10,0.02f,z+4,c);
+    /* Stadium seating */
+    drawRect(0, 0, W, 35, GU_RGBA(45, 48, 65, 255));
+    drawRect(0, 237, W, 35, GU_RGBA(45, 48, 65, 255));
+    drawRect(0, 35, 27, 202, GU_RGBA(45, 48, 65, 255));
+    drawRect(453, 35, 27, 202, GU_RGBA(45, 48, 65, 255));
+
+    for(i = 0; i < 18; i++)
+    {
+        drawRect(4 + i * 27, 7, 18, 4,
+                 GU_RGBA(160, 160, 175, 255));
+        drawRect(4 + i * 27, 20, 18, 4,
+                 GU_RGBA(160, 160, 175, 255));
+        drawRect(4 + i * 27, 244, 18, 4,
+                 GU_RGBA(160, 160, 175, 255));
+        drawRect(4 + i * 27, 258, 18, 4,
+                 GU_RGBA(160, 160, 175, 255));
     }
 
-    line(-10,0.06f,-16,10,0.06f,-16,WHITE);
-    line(-10,0.06f,16,10,0.06f,16,WHITE);
-    line(-10,0.06f,-16,-10,0.06f,16,WHITE);
-    line(10,0.06f,-16,10,0.06f,16,WHITE);
-    line(-10,0.06f,0,10,0.06f,0,WHITE);
+    /* Field */
+    drawRect(27, 35, 426, 202, grass);
 
-    for(i=0;i<64;i++) {
-        float a=i*6.2831853f/64;
-        float b=(i+1)*6.2831853f/64;
-
-        line(2.5f*cosf(a),0.06f,2.5f*sinf(a),
-             2.5f*cosf(b),0.06f,2.5f*sinf(b),WHITE);
+    for(i = 0; i < 6; i++)
+    {
+        if(i % 2 == 0)
+            drawRect(27 + i * 71, 35, 71, 202, stripe);
     }
 
-    line(-5.5f,0.06f,-16,5.5f,0.06f,-16,WHITE);
-    line(-5.5f,0.06f,-16,-5.5f,0.06f,-10,WHITE);
-    line(5.5f,0.06f,-16,5.5f,0.06f,-10,WHITE);
-    line(-5.5f,0.06f,-10,5.5f,0.06f,-10,WHITE);
+    /* Field boundaries */
+    drawRect(27, 35, 426, 2, white);
+    drawRect(27, 235, 426, 2, white);
+    drawRect(27, 35, 2, 202, white);
+    drawRect(451, 35, 2, 202, white);
 
-    line(-5.5f,0.06f,16,5.5f,0.06f,16,WHITE);
-    line(-5.5f,0.06f,16,-5.5f,0.06f,10,WHITE);
-    line(5.5f,0.06f,16,5.5f,0.06f,10,WHITE);
-    line(-5.5f,0.06f,10,5.5f,0.06f,10,WHITE);
+    /* Halfway line */
+    drawRect(239, 35, 2, 202, white);
+
+    /* Centre circle */
+    drawCircle(240, 136, 42, white);
+    drawCircle(240, 136, 40, grass);
+    drawCircle(240, 136, 3, white);
+
+    /* Penalty boxes */
+    drawRect(27, 91, 54, 2, white);
+    drawRect(27, 181, 54, 2, white);
+    drawRect(79, 91, 2, 92, white);
+
+    drawRect(399, 91, 54, 2, white);
+    drawRect(399, 181, 54, 2, white);
+    drawRect(399, 91, 2, 92, white);
+
+    /* Six-yard boxes */
+    drawRect(27, 112, 22, 2, white);
+    drawRect(27, 160, 22, 2, white);
+    drawRect(47, 112, 2, 50, white);
+
+    drawRect(431, 112, 22, 2, white);
+    drawRect(431, 160, 22, 2, white);
+    drawRect(431, 112, 2, 50, white);
+
+    /* Goals */
+    drawRect(10, 116, 17, 40, GU_RGBA(230, 230, 230, 255));
+    drawRect(453, 116, 17, 40, GU_RGBA(230, 230, 230, 255));
+
+    /* Corner flags */
+    drawCircle(29, 37, 3, GU_RGBA(255, 220, 0, 255));
+    drawCircle(451, 37, 3, GU_RGBA(255, 220, 0, 255));
+    drawCircle(29, 235, 3, GU_RGBA(255, 220, 0, 255));
+    drawCircle(451, 235, 3, GU_RGBA(255, 220, 0, 255));
+
+    /* Advertising boards */
+    drawRect(27, 30, 426, 4, GU_RGBA(230, 170, 20, 255));
+    drawRect(27, 238, 426, 4, GU_RGBA(230, 170, 20, 255));
+
+    /* Floodlights */
+    drawCircle(12, 42, 5, GU_RGBA(255, 255, 170, 255));
+    drawCircle(468, 42, 5, GU_RGBA(255, 255, 170, 255));
 }
 
-static void drawStadium(void)
+static void drawPlayer(Player *p, int team, int selected)
 {
-    int s,r,n;
+    float x = screenX(p->x);
+    float y = screenY(p->y);
 
-    unsigned int crowd[6]={
-        0xFFE03030,0xFF3030D0,WHITE,
-        0xFF20A040,0xFF20A0E0,0xFF303030
-    };
+    unsigned int color;
 
-    for(s=-1;s<=1;s+=2) {
-        for(r=0;r<8;r++) {
-            float a=11.3f+r*0.8f;
-            float b=a+0.8f;
-            float y=0.45f+r*0.55f;
+    if(team == BLUE)
+        color = GU_RGBA(25, 70, 245, 255);
+    else
+        color = GU_RGBA(225, 35, 35, 255);
 
-            quad(s*a,y,-20,s*b,y,-20,
-                 s*a,y,20,s*b,y,20,
-                 (r%2)?0xFF3030B0:0xFF404080);
-        }
-
-        for(r=0;r<7;r++) {
-            float a=17.4f+r*0.75f;
-            float b=a+0.75f;
-            float y=0.45f+r*0.55f;
-
-            quad(-12,y,s*a,12,y,s*a,
-                 -12,y,s*b,12,y,s*b,
-                 (r%2)?0xFF3030B0:0xFF404080);
-        }
-
-        for(r=0;r<7;r++) {
-            for(n=0;n<22;n++) {
-                float z=-18+n*1.65f;
-                float x=s*(11.7f+r*0.8f);
-                float y=0.65f+r*0.55f;
-                float bob=0.05f*sinf(frameCount*0.04f+n+r);
-
-                quad(x,y+bob,z,x,y+bob,z+0.35f,
-                     x,y+0.3f+bob,z,
-                     x,y+0.3f+bob,z+0.35f,
-                     crowd[(n+r)%6]);
-            }
-        }
+    if(selected)
+    {
+        drawCircle(x, y + 1, 10,
+                   GU_RGBA(255, 230, 0, 255));
     }
 
-    for(s=-1;s<=1;s+=2) {
-        quad(s*16,5.2f,-21,s*19,5.2f,-21,
-             s*16,5.2f,21,s*19,5.2f,21,
-             0xFF555555);
-    }
-
-    for(s=-1;s<=1;s+=2) {
-        for(r=-1;r<=1;r+=2) {
-            float x=s*14.5f;
-            float z=r*19.5f;
-
-            line(x,0,z,x,9,z,0xFFAAAAAA);
-
-            quad(x-0.65f,9.2f,z-0.3f,
-                 x+0.65f,9.2f,z-0.3f,
-                 x-0.65f,9.8f,z+0.3f,
-                 x+0.65f,9.8f,z+0.3f,
-                 0xFFFFFFDD);
-        }
-    }
+    drawCircle(x, y, 7, color);
+    drawCircle(x - 2, y - 2, 2,
+               GU_RGBA(255, 255, 255, 255));
 }
 
-static void drawGoals(void)
+static void drawBall(void)
 {
-    int s,n;
-
-    for(s=-1;s<=1;s+=2) {
-        float z=s*16.0f;
-
-        line(-3.66f,0.05f,z,3.66f,0.05f,z,WHITE);
-        line(-3.66f,0.05f,z,-3.66f,2.44f,z,WHITE);
-        line(3.66f,0.05f,z,3.66f,2.44f,z,WHITE);
-        line(-3.66f,2.44f,z,3.66f,2.44f,z,WHITE);
-
-        for(n=0;n<=6;n++) {
-            float x=-3.66f+n*1.22f;
-            line(x,0.05f,z,x,2.44f,z+s*1.5f,WHITE);
-        }
-
-        for(n=0;n<=4;n++) {
-            float y=n*0.61f;
-            line(-3.66f,y,z,3.66f,y,z,WHITE);
-        }
-    }
+    drawCircle(screenX(ball.x), screenY(ball.y), 4,
+               GU_RGBA(255, 255, 255, 255));
+    drawCircle(screenX(ball.x), screenY(ball.y), 1,
+               GU_RGBA(20, 20, 20, 255));
 }
-
-static void drawBoards(void)
-{
-    int i;
-
-    for(i=0;i<10;i++) {
-        float z=-16+i*3.2f;
-        unsigned int c=(i%2)?0xFF00A0E0:0xFFE05020;
-
-        quad(-10.8f,0.1f,z,-10.8f,0.1f,z+2.8f,
-             -10.8f,1.0f,z,-10.8f,1.0f,z+2.8f,c);
-
-        quad(10.8f,0.1f,z,10.8f,0.1f,z+2.8f,
-             10.8f,1.0f,z,10.8f,1.0f,z+2.8f,c);
-    }
-}
-
-/* PLAYERS */
-
-static void drawPlayer(float x,float z,
-                       unsigned int kit,int selected)
-{
-    float bob=0.035f*sinf(frameCount*0.18f);
-
-    line(x-0.22f,0.12f,z,x-0.25f,0.78f+bob,z,0xFF101010);
-    line(x+0.22f,0.12f,z,x+0.25f,0.78f+bob,z,0xFF101010);
-
-    line(x-0.25f,0.78f+bob,z,x-0.18f,1.12f+bob,z,0xFF202020);
-    line(x+0.25f,0.78f+bob,z,x+0.18f,1.12f+bob,z,0xFF202020);
-
-    quad(x-0.34f,1.05f+bob,z,
-         x+0.34f,1.05f+bob,z,
-         x-0.29f,1.95f+bob,z,
-         x+0.29f,1.95f+bob,z,kit);
-
-    line(x-0.30f,1.82f+bob,z,
-         x-0.48f,1.18f+bob,z,0xFFB87945);
-
-    line(x+0.30f,1.82f+bob,z,
-         x+0.48f,1.18f+bob,z,0xFFB87945);
-
-    quad(x-0.18f,1.95f+bob,z,
-         x+0.18f,1.95f+bob,z,
-         x-0.18f,2.28f+bob,z,
-         x+0.18f,2.28f+bob,z,0xFFB87945);
-
-    if(selected) {
-        line(x-0.6f,2.5f+bob,z,
-             x+0.6f,2.5f+bob,z,0xFFFFFF00);
-    }
-}
-
-static void drawBall(float x,float z)
-{
-    float y=0.18f+0.035f*sinf(frameCount*0.25f);
-
-    triangle(x,y+0.16f,z,x-0.16f,y,z,
-             x,y,z-0.16f,WHITE);
-
-    triangle(x,y+0.16f,z,x,y,z-0.16f,
-             x+0.16f,y,z,WHITE);
-
-    triangle(x,y+0.16f,z,x+0.16f,y,z,
-             x,y,z+0.16f,0xFF202020);
-
-    triangle(x,y+0.16f,z,x,y,z+0.16f,
-             x-0.16f,y,z,WHITE);
-}
-
-/* SCOREBOARD */
 
 static void drawScoreboard(void)
 {
-    int i;
+    drawRect(155, 3, 170, 25,
+             GU_RGBA(10, 10, 20, 230));
 
-    quad(-5.5f,9,-22,5.5f,9,-22,
-         -5.5f,12.5f,-22,5.5f,12.5f,-22,
-         0xFF101010);
+    drawRect(158, 6, 164, 19,
+             GU_RGBA(25, 35, 55, 255));
 
-    quad(-5.1f,9.5f,-21.9f,-2.5f,9.5f,-21.9f,
-         -5.1f,12,-21.9f,-2.5f,12,-21.9f,BLUE);
+    /* Blue and red indicators */
+    drawRect(163, 10, 12, 11,
+             GU_RGBA(25, 70, 245, 255));
 
-    quad(2.5f,9.5f,-21.9f,5.1f,9.5f,-21.9f,
-         2.5f,12,-21.9f,5.1f,12,-21.9f,RED);
+    drawRect(305, 10, 12, 11,
+             GU_RGBA(225, 35, 35, 255));
 
-    for(i=0;i<blueScore && i<5;i++) {
-        float x=-1.8f+i*0.55f;
-        line(x,10.0f,-21.7f,x,11.4f,-21.7f,WHITE);
-    }
+    /* Score blocks */
+    drawRect(183, 9, 35, 13,
+             GU_RGBA(255, 255, 255, 255));
+    drawRect(262, 9, 35, 13,
+             GU_RGBA(255, 255, 255, 255));
 
-    for(i=0;i<redScore && i<5;i++) {
-        float x=2.8f+i*0.4f;
-        line(x,10.0f,-21.7f,x,11.4f,-21.7f,WHITE);
-    }
+    /* Simple score digits */
+    drawRect(190, 12, 5, 7,
+             GU_RGBA(10, 10, 10, 255));
+    drawRect(270, 12, 5, 7,
+             GU_RGBA(10, 10, 10, 255));
+
+    /* Time indicator */
+    drawRect(225, 10, 30, 10,
+             GU_RGBA(30, 30, 40, 255));
+    drawRect(237, 12, 5, 6,
+             GU_RGBA(255, 255, 255, 255));
 }
-
-/* FORMATIONS */
 
 static void setupTeams(void)
 {
     int i;
 
-    float bx[11]={0,0,-7,-2.3f,2.3f,7,-5,5,-6,0,6};
-    float bz[11]={-14.3f,-10,-11,-11,-10,-4,-3,-4,2,4,2};
+    float bx[11] = {
+        0, -7, -3, 3, 7,
+        -5, 0, 5,
+        -6, 0, 6
+    };
 
-    float rx[11]={0,-7,-2.3f,2.3f,7,-5,0,5,-6,0,6};
-    float rz[11]={14.3f,10,11,11,10,4,3,4,-2,-4,-2};
+    float by[11] = {
+        13, 9, 9, 9, 9,
+        3, 4, 3,
+        -5, -7, -5
+    };
 
-    for(i=0;i<11;i++) {
-        blue[i].homeX=bx[i];
-        blue[i].homeZ=bz[i];
-        blue[i].x=bx[i];
-        blue[i].z=bz[i];
+    for(i = 0; i < 11; i++)
+    {
+        blue[i].x = bx[i];
+        blue[i].y = by[i];
+        blue[i].hx = bx[i];
+        blue[i].hy = by[i];
 
-        red[i].homeX=rx[i];
-        red[i].homeZ=rz[i];
-        red[i].x=rx[i];
-        red[i].z=rz[i];
+        red[i].x = -bx[i];
+        red[i].y = -by[i];
+        red[i].hx = -bx[i];
+        red[i].hy = -by[i];
     }
 
-    controlled=9;
-    ballOwner=9;
-    ballMoving=0;
-    passTarget=-1;
-    ballX=blue[9].x;
-    ballZ=blue[9].z;
+    controlled = 9;
 }
 
-/* KICKOFF */
+static void resetKickoff(int blueStarts)
+{
+    setupTeams();
 
-static void kickoff(int blueStarts)
+    ball.x = 0;
+    ball.y = 0;
+    ball.vx = 0;
+    ball.vy = 0;
+
+    passTarget = -1;
+
+    if(blueStarts)
+        owner = 9;
+    else
+        owner = 11 + 9;
+
+    controlled = 9;
+}
+
+static int nearestBlue(float x, float y)
 {
     int i;
+    int best = 0;
+    float bestDist = 99999.0f;
 
-    for(i=0;i<11;i++) {
-        blue[i].x=blue[i].homeX;
-        blue[i].z=blue[i].homeZ;
+    for(i = 0; i < 11; i++)
+    {
+        float d = distance(blue[i].x, blue[i].y, x, y);
 
-        red[i].x=red[i].homeX;
-        red[i].z=red[i].homeZ;
-    }
-
-    ballMoving=0;
-    ballVX=0;
-    ballVZ=0;
-    passTarget=-1;
-    passCooldown=30;
-    goalTimer=90;
-
-    if(blueStarts) {
-        blue[9].x=0;
-        blue[9].z=0;
-        ballOwner=9;
-    } else {
-        red[9].x=0;
-        red[9].z=0;
-        ballOwner=RED_ID(9);
-    }
-
-    ballX=0;
-    ballZ=0;
-}
-
-/* PASSING */
-
-static int findPassTarget(int passer,int teamRed,int through)
-{
-    int i,best=-1;
-    float bestScore=99999.0f;
-    Player *from=getPlayer(passer);
-
-    for(i=0;i<11;i++) {
-        int id=teamRed?RED_ID(i):i;
-        Player *to=getPlayer(id);
-
-        float dx=to->x-from->x;
-        float dz=to->z-from->z;
-        float d=sqrtf(dx*dx+dz*dz);
-        float forward=teamRed?dz:-dz;
-        float score;
-
-        if(id==passer || d<1.0f || d>18.0f)
-            continue;
-
-        score=d;
-        if(forward<0) score+=7.0f;
-        if(through && forward>0) score-=3.0f;
-
-        if(score<bestScore) {
-            bestScore=score;
-            best=id;
+        if(d < bestDist)
+        {
+            bestDist = d;
+            best = i;
         }
     }
 
     return best;
 }
 
-static void kickToPlayer(int passer,int target,float power)
+static int nearestRed(float x, float y)
 {
-    Player *from;
-    Player *to;
-    float dx,dz,d;
+    int i;
+    int best = 0;
+    float bestDist = 99999.0f;
 
-    if(target<0 || target>=22) return;
+    for(i = 0; i < 11; i++)
+    {
+        float d = distance(red[i].x, red[i].y, x, y);
 
-    from=getPlayer(passer);
-    to=getPlayer(target);
+        if(d < bestDist)
+        {
+            bestDist = d;
+            best = i;
+        }
+    }
 
-    dx=to->x-from->x;
-    dz=to->z-from->z;
-    d=sqrtf(dx*dx+dz*dz);
-
-    if(d<0.1f) return;
-
-    ballX=from->x;
-    ballZ=from->z+(IS_RED(passer)?0.4f:-0.4f);
-
-    ballVX=(dx/d)*power;
-    ballVZ=(dz/d)*power;
-
-    ballMoving=1;
-    ballOwner=-1;
-    passTarget=target;
+    return best;
 }
 
-/* SHOOTING */
-
-static void shootBall(int power,int chip,int shooter)
+static int findPassTarget(void)
 {
-    Player *p=getPlayer(shooter);
-    float direction=IS_RED(shooter)?1.0f:-1.0f;
+    int i;
+    int best = -1;
+    float bestScore = -99999.0f;
 
-    float aimX=0.0f;
+    for(i = 0; i < 11; i++)
+    {
+        float d;
+        float score;
 
-    if(p->x>0.8f) aimX=-0.12f;
-    if(p->x<-0.8f) aimX=0.12f;
+        if(i == controlled)
+            continue;
 
-    ballX=p->x;
-    ballZ=p->z+direction*0.45f;
+        d = distance(blue[i].x, blue[i].y,
+                     blue[controlled].x,
+                     blue[controlled].y);
 
-    ballVX=aimX*(chip?0.7f:1.0f);
-    ballVZ=direction*(power?0.78f:0.59f);
+        score = -d + (-blue[i].y * 0.8f);
 
-    ballOwner=-1;
-    ballMoving=1;
-    passTarget=-1;
+        if(score > bestScore)
+        {
+            bestScore = score;
+            best = i;
+        }
+    }
+
+    return best;
 }
 
-/* TACKLING */
-
-static void attemptTackle(int sliding)
+static void passBall(int through)
 {
-    int enemy=ballOwner;
-    Player *p=&blue[controlled];
-    Player *e;
-    float d;
+    int target = findPassTarget();
+    float dx, dy, d;
+    float power;
 
-    if(enemy<0 || !IS_RED(enemy) || tackleCooldown>0)
+    if(target < 0)
         return;
 
-    e=getPlayer(enemy);
-    d=sqrtf(distance2(p->x,p->z,e->x,e->z));
+    dx = blue[target].x - blue[controlled].x;
+    dy = blue[target].y - blue[controlled].y;
+    d = sqrtf(dx * dx + dy * dy);
 
-    if(d<(sliding?2.0f:1.45f)) {
-        ballOwner=controlled;
-        ballMoving=0;
-        ballVX=0;
-        ballVZ=0;
-        passTarget=-1;
-        tackleCooldown=sliding?65:35;
-    } else {
-        tackleCooldown=sliding?45:20;
+    if(d < 0.1f)
+        return;
+
+    power = through ? 0.55f : 0.38f;
+
+    ball.x = blue[controlled].x;
+    ball.y = blue[controlled].y;
+
+    ball.vx = dx / d * power;
+    ball.vy = dy / d * power;
+
+    owner = -1;
+    passTarget = target;
+}
+
+static void shootBall(int chip)
+{
+    float power = chip ? 0.52f : 0.78f;
+
+    ball.x = blue[controlled].x;
+    ball.y = blue[controlled].y;
+
+    ball.vx = 0;
+    ball.vy = -power;
+
+    if(chip)
+        ball.vx = 0.10f;
+
+    owner = -1;
+    passTarget = -1;
+}
+
+static void crossBall(void)
+{
+    ball.x = blue[controlled].x;
+    ball.y = blue[controlled].y;
+
+    ball.vx = 0.35f;
+    ball.vy = -0.52f;
+
+    owner = -1;
+    passTarget = -1;
+}
+
+static void moveControlled(float dx, float dy, float speed)
+{
+    Player *p = &blue[controlled];
+
+    p->x += dx * speed;
+    p->y += dy * speed;
+
+    p->x = clampFloat(p->x, -9.0f, 9.0f);
+    p->y = clampFloat(p->y, -14.0f, 14.0f);
+
+    if(owner == controlled)
+    {
+        ball.x = p->x;
+        ball.y = p->y;
     }
 }
 
-/* PLAYER SWITCHING */
-
-static void switchNearestPlayer(void)
+static void switchPlayer(void)
 {
-    int i,best=0;
-    float bestD=99999.0f;
+    int i;
+    int best = controlled;
+    float bestDist = 99999.0f;
 
-    for(i=0;i<11;i++) {
-        float d=distance2(blue[i].x,blue[i].z,ballX,ballZ);
+    for(i = 0; i < 11; i++)
+    {
+        float d = distance(blue[i].x, blue[i].y,
+                           ball.x, ball.y);
 
-        if(d<bestD) {
-            bestD=d;
-            best=i;
+        if(d < bestDist)
+        {
+            bestDist = d;
+            best = i;
         }
     }
 
-    controlled=best;
+    controlled = best;
 }
 
-static void switchDirectional(float dx,float dz)
+static void switchDirectional(float dx, float dy)
 {
-    int i,best=-1;
-    float bestScore=-99999.0f;
+    int i;
+    int best = controlled;
+    float bestScore = -99999.0f;
 
-    for(i=0;i<11;i++) {
-        float x=blue[i].x-blue[controlled].x;
-        float z=blue[i].z-blue[controlled].z;
-        float d=sqrtf(x*x+z*z);
-        float dot;
+    for(i = 0; i < 11; i++)
+    {
+        float vx = blue[i].x - blue[controlled].x;
+        float vy = blue[i].y - blue[controlled].y;
+        float d = sqrtf(vx * vx + vy * vy);
+        float score;
 
-        if(d<0.5f) continue;
+        if(d < 0.1f)
+            continue;
 
-        dot=(x*dx+z*dz)/d;
+        score = (vx * dx + vy * dy) / d;
 
-        if(dot>0.25f && dot*2.0f-d*0.04f>bestScore) {
-            bestScore=dot*2.0f-d*0.04f;
-            best=i;
+        if(score > bestScore)
+        {
+            bestScore = score;
+            best = i;
         }
     }
 
-    if(best>=0) controlled=best;
+    controlled = best;
 }
 
-/* AI */
+/* CIRCLE = STANDING TACKLE
+   SQUARE = SLIDING TACKLE */
+static void attemptTackle(int sliding)
+{
+    int enemy;
+    Player *p;
+    Player *e;
+    float dx, dy, d;
+    float range;
+    float step;
+
+    if(owner < 11 || owner >= 22)
+        return;
+
+    if(tackleCooldown > 0)
+        return;
+
+    p = &blue[controlled];
+    e = &red[owner - 11];
+
+    dx = e->x - p->x;
+    dy = e->y - p->y;
+    d = sqrtf(dx * dx + dy * dy);
+
+    if(d > 0.01f)
+    {
+        step = sliding ? 0.55f : 0.38f;
+
+        p->x += dx / d * step;
+        p->y += dy / d * step;
+    }
+
+    p->x = clampFloat(p->x, -9.0f, 9.0f);
+    p->y = clampFloat(p->y, -14.0f, 14.0f);
+
+    d = distance(p->x, p->y, e->x, e->y);
+
+    range = sliding ? 3.5f : 3.0f;
+
+    if(d <= range)
+    {
+        enemy = owner;
+
+        owner = controlled;
+        ball.x = p->x;
+        ball.y = p->y;
+        ball.vx = 0;
+        ball.vy = 0;
+        passTarget = -1;
+
+        tackleCooldown = sliding ? 35 : 18;
+    }
+    else
+    {
+        /* Keep the button responsive even when far away. */
+        tackleCooldown = 3;
+    }
+}
+
+static void goalkeeperRush(void)
+{
+    int keeper = 0;
+    Player *g = &blue[keeper];
+
+    if(owner >= 11 || owner == -1)
+    {
+        float dx = ball.x - g->x;
+        float dy = ball.y - g->y;
+        float d = sqrtf(dx * dx + dy * dy);
+
+        if(d > 0.1f)
+        {
+            g->x += dx / d * 0.65f;
+            g->y += dy / d * 0.65f;
+        }
+
+        if(d < 2.8f)
+        {
+            owner = 0;
+            ball.x = g->x;
+            ball.y = g->y;
+            ball.vx = 0;
+            ball.vy = 0;
+        }
+    }
+}
 
 static void updateAI(void)
 {
     int i;
-    int nearestBlue=0;
-    int nearestRed=0;
-    float db=99999.0f;
-    float dr=99999.0f;
 
-    for(i=0;i<11;i++) {
-        float d1=distance2(blue[i].x,blue[i].z,ballX,ballZ);
-        float d2=distance2(red[i].x,red[i].z,ballX,ballZ);
+    for(i = 0; i < 11; i++)
+    {
+        Player *p = &red[i];
 
-        if(d1<db) {
-            db=d1;
-            nearestBlue=i;
-        }
-
-        if(d2<dr) {
-            dr=d2;
-            nearestRed=i;
-        }
-    }
-
-    for(i=0;i<11;i++) {
-        float tx,tz;
-
-        if(i==controlled) continue;
-
-        tx=blue[i].homeX+ballX*0.10f;
-        tz=blue[i].homeZ+ballZ*0.08f;
-
-        if(IS_RED(ballOwner)) {
-            if(i==nearestBlue || i==(nearestBlue+1)%11) {
-                tx=ballX;
-                tz=ballZ;
+        if(owner >= 11 && owner < 22)
+        {
+            if(owner == i + 11)
+            {
+                p->y += 0.025f;
+                continue;
             }
         }
 
-        blue[i].x+=(clampf(tx,-8.7f,8.7f)-blue[i].x)*0.018f;
-        blue[i].z+=(clampf(tz,-14.5f,14.5f)-blue[i].z)*0.018f;
-    }
+        if(owner >= 0 && owner < 11)
+        {
+            float dx = blue[owner].x - p->x;
+            float dy = blue[owner].y - p->y;
+            float d = sqrtf(dx * dx + dy * dy);
 
-    for(i=0;i<11;i++) {
-        float tx,tz;
+            if(d > 0.1f)
+            {
+                p->x += dx / d * 0.045f;
+                p->y += dy / d * 0.045f;
+            }
+        }
+        else
+        {
+            float dx = ball.x - p->x;
+            float dy = ball.y - p->y;
+            float d = sqrtf(dx * dx + dy * dy);
 
-        tx=red[i].homeX+ballX*0.10f;
-        tz=red[i].homeZ+ballZ*0.08f;
-
-        if(ballOwner>=0 && !IS_RED(ballOwner)) {
-            if(i==nearestRed || (secondPress && i==(nearestRed+1)%11)) {
-                tx=ballX;
-                tz=ballZ;
+            if(d > 0.1f)
+            {
+                p->x += dx / d * 0.035f;
+                p->y += dy / d * 0.035f;
             }
         }
 
-        if(IS_RED(ballOwner)) {
-            if(i==ballOwner-11) {
-                tz+=0.045f;
-            } else if(i>=5) {
-                tz-=0.15f;
-            }
-        }
-
-        red[i].x+=(clampf(tx,-8.7f,8.7f)-red[i].x)*0.016f;
-        red[i].z+=(clampf(tz,-14.5f,14.5f)-red[i].z)*0.016f;
+        p->x = clampFloat(p->x, -9.0f, 9.0f);
+        p->y = clampFloat(p->y, -14.0f, 14.0f);
     }
 
-    blue[0].x+=(clampf(ballX,-2.5f,2.5f)-blue[0].x)*0.025f;
-    blue[0].z+=(-14.3f-blue[0].z)*0.025f;
+    /* Red player carrying the ball moves toward Blue's goal. */
+    if(owner >= 11 && owner < 22)
+    {
+        Player *p = &red[owner - 11];
 
-    red[0].x+=(clampf(ballX,-2.5f,2.5f)-red[0].x)*0.025f;
-    red[0].z+=(14.3f-red[0].z)*0.025f;
+        p->y -= 0.045f;
+
+        ball.x = p->x;
+        ball.y = p->y;
+
+        if(p->y < -10.0f && fabsf(p->x) < 5.0f)
+        {
+            ball.vy = -0.65f;
+            ball.vx = (0.0f - p->x) * 0.025f;
+            owner = -1;
+        }
+    }
 }
-
-/* BALL PHYSICS AND AUTOMATIC SWITCHING */
 
 static void updateBall(void)
 {
     int i;
-    float bestD=99999.0f;
-    int best=-1;
+    int best = -1;
+    float bestDist = 99999.0f;
 
-    if(ballOwner>=0 && !ballMoving) {
-        Player *p=getPlayer(ballOwner);
+    if(owner >= 0)
+    {
+        Player *p = getPlayer(owner);
 
-        ballX=p->x;
-        ballZ=p->z+(IS_RED(ballOwner)?0.42f:-0.42f);
-    }
+        ball.x = p->x;
+        ball.y = p->y;
 
-    if(ballMoving) {
-        ballX+=ballVX;
-        ballZ+=ballVZ;
-
-        ballVX*=0.992f;
-        ballVZ*=0.992f;
-
-        if(passTarget>=0) {
-            Player *target=getPlayer(passTarget);
-
-            if(distance2(target->x,target->z,ballX,ballZ)<0.55f) {
-                ballOwner=passTarget;
-
-                if(ballOwner<11) {
-                    controlled=ballOwner;
-                }
-
-                ballMoving=0;
-                passTarget=-1;
-                ballVX=0;
-                ballVZ=0;
-            }
-        }
-
-        if(ballZ<-16.2f && fabsf(ballX)<3.66f) {
-            blueScore++;
-            kickoff(0);
-            return;
-        }
-
-        if(ballZ>16.2f && fabsf(ballX)<3.66f) {
-            redScore++;
-            kickoff(1);
-            return;
-        }
-
-        if(ballX<-9.7f || ballX>9.7f ||
-           ballZ<-17.5f || ballZ>17.5f) {
-            ballX=clampf(ballX,-9.3f,9.3f);
-            ballZ=clampf(ballZ,-15.0f,15.0f);
-            ballVX=0;
-            ballVZ=0;
-            ballMoving=0;
-            ballOwner=-1;
-            passTarget=-1;
-        }
-
-        if(fabsf(ballVX)+fabsf(ballVZ)<0.025f) {
-            ballMoving=0;
-            ballOwner=-1;
-            passTarget=-1;
-        }
-    }
-
-    if(!ballMoving && ballOwner<0) {
-        for(i=0;i<22;i++) {
-            Player *p=getPlayer(i);
-            float d=distance2(p->x,p->z,ballX,ballZ);
-
-            if(d<bestD) {
-                bestD=d;
-                best=i;
-            }
-        }
-
-        if(best>=0 && bestD<0.75f) {
-            ballOwner=best;
-
-            if(best<11) {
-                controlled=best;
-            }
-
-            ballMoving=0;
-        }
-    }
-
-    if(passCooldown>0) passCooldown--;
-    if(tackleCooldown>0) tackleCooldown--;
-    if(goalTimer>0) goalTimer--;
-}
-
-/* BLUE GOALKEEPER RUSH */
-
-static void goalkeeperRush(void)
-{
-    float dx=ballX-blue[0].x;
-    float dz=ballZ-blue[0].z;
-    float d=sqrtf(dx*dx+dz*dz);
-
-    if(d>0.1f && ballZ<0.0f) {
-        blue[0].x+=dx/d*0.32f;
-        blue[0].z+=dz/d*0.32f;
-    }
-
-    if(distance2(blue[0].x,blue[0].z,ballX,ballZ)<1.0f) {
-        ballOwner=0;
-        ballMoving=0;
-        ballVX=0;
-        ballVZ=0;
-        passTarget=-1;
-        controlled=0;
-    }
-}
-
-/* CONTROL SYSTEM */
-
-static void updateMatch(void)
-{
-    SceCtrlData pad;
-    Player *p;
-    float speed=0.12f;
-    float ax,ay;
-    float dx=0,dz=0;
-
-    unsigned int pressed;
-    unsigned int held;
-
-    sceCtrlPeekBufferPositive(&pad,1);
-
-    held=pad.Buttons;
-    pressed=held & ~previousButtons;
-
-    if(pressed & PSP_CTRL_START)
-        paused=!paused;
-
-    if(paused) {
-        previousButtons=held;
         return;
     }
 
-    if(held & PSP_CTRL_RTRIGGER)
-        speed=0.20f;
+    ball.x += ball.vx;
+    ball.y += ball.vy;
 
-    if(controlled<0 || controlled>=11)
-        controlled=9;
+    ball.vx *= 0.985f;
+    ball.vy *= 0.985f;
 
-    p=&blue[controlled];
+    if(fabsf(ball.vx) < 0.006f)
+        ball.vx = 0;
 
-    if(held & PSP_CTRL_LEFT)  dx-=1;
-    if(held & PSP_CTRL_RIGHT) dx+=1;
-    if(held & PSP_CTRL_UP)    dz-=1;
-    if(held & PSP_CTRL_DOWN)  dz+=1;
+    if(fabsf(ball.vy) < 0.006f)
+        ball.vy = 0;
 
-    ax=((int)pad.Lx-128)/127.0f;
-    ay=((int)pad.Ly-128)/127.0f;
-
-    if(fabsf(ax)>0.18f) dx+=ax;
-    if(fabsf(ay)>0.18f) dz+=ay;
-
-    p->x=clampf(p->x+dx*speed,-9.0f,9.0f);
-    p->z=clampf(p->z+dz*speed,-14.5f,14.5f);
-
-    if((pressed & PSP_CTRL_LTRIGGER) &&
-       !(held & PSP_CTRL_CROSS)) {
-        if(fabsf(dx)+fabsf(dz)>0.2f)
-            switchDirectional(dx,dz);
-        else
-            switchNearestPlayer();
+    /* Goal for Blue */
+    if(ball.y < -15.0f && fabsf(ball.x) < 3.0f)
+    {
+        scoreBlue++;
+        resetKickoff(0);
+        return;
     }
 
-    secondPress=((held & PSP_CTRL_LTRIGGER) &&
-                 (held & PSP_CTRL_RTRIGGER))?1:0;
+    /* Goal for Red */
+    if(ball.y > 15.0f && fabsf(ball.x) < 3.0f)
+    {
+        scoreRed++;
+        resetKickoff(1);
+        return;
+    }
 
-    /* ATTACKING: BLUE HAS THE BALL. */
+    if(ball.x < -10.0f || ball.x > 10.0f)
+        ball.vx = -ball.vx * 0.65f;
 
-    if(ballOwner==controlled &&
-       !ballMoving && passCooldown==0) {
+    if(ball.y < -15.0f || ball.y > 15.0f)
+        ball.vy = -ball.vy * 0.65f;
 
-        if((pressed & PSP_CTRL_CROSS) &&
-           (held & PSP_CTRL_TRIANGLE)) {
-            int target=findPassTarget(controlled,0,1);
+    ball.x = clampFloat(ball.x, -10.0f, 10.0f);
+    ball.y = clampFloat(ball.y, -15.0f, 15.0f);
 
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.38f);
-                passCooldown=25;
-            }
-        }
+    /* Automatic pass receiver selection. */
+    if(passTarget >= 0)
+    {
+        if(distance(ball.x, ball.y,
+                    blue[passTarget].x,
+                    blue[passTarget].y) < 1.7f)
+        {
+            owner = passTarget;
+            controlled = passTarget;
 
-        else if((pressed & PSP_CTRL_CROSS) &&
-                (held & PSP_CTRL_RTRIGGER)) {
-            int target=findPassTarget(controlled,0,0);
+            ball.vx = 0;
+            ball.vy = 0;
+            passTarget = -1;
 
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.36f);
-                passCooldown=25;
-            }
-        }
-
-        else if(pressed & PSP_CTRL_CROSS) {
-            int target=findPassTarget(controlled,0,0);
-
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.32f);
-                passCooldown=20;
-            }
-        }
-
-        else if((pressed & PSP_CTRL_SQUARE) &&
-                (held & PSP_CTRL_TRIANGLE)) {
-            shootBall(1,1,controlled);
-            passCooldown=35;
-        }
-
-        else if((pressed & PSP_CTRL_SQUARE) &&
-                (held & PSP_CTRL_RTRIGGER)) {
-            shootBall(1,0,controlled);
-            passCooldown=35;
-        }
-
-        else if(pressed & PSP_CTRL_SQUARE) {
-            shootBall(0,0,controlled);
-            passCooldown=30;
-        }
-
-        else if((pressed & PSP_CTRL_CIRCLE) &&
-                (held & PSP_CTRL_RTRIGGER)) {
-            int target=findPassTarget(controlled,0,1);
-
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.55f);
-                passCooldown=30;
-            }
-        }
-
-        else if(pressed & PSP_CTRL_CIRCLE) {
-            int target=findPassTarget(controlled,0,1);
-
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.47f);
-                passCooldown=25;
-            }
-        }
-
-        else if((pressed & PSP_CTRL_TRIANGLE) &&
-                (held & PSP_CTRL_RTRIGGER)) {
-            int target=findPassTarget(controlled,0,1);
-
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.52f);
-                passCooldown=30;
-            }
-        }
-
-        else if(pressed & PSP_CTRL_TRIANGLE) {
-            int target=findPassTarget(controlled,0,1);
-
-            if(target>=0) {
-                kickToPlayer(controlled,target,0.40f);
-                passCooldown=25;
-            }
+            return;
         }
     }
 
-    /* DEFENDING: RED HAS THE BALL. */
+    /* Find the nearest player to a loose ball. */
+    for(i = 0; i < 11; i++)
+    {
+        float d = distance(ball.x, ball.y,
+                           blue[i].x, blue[i].y);
 
-    else if(IS_RED(ballOwner)) {
-        if(pressed & PSP_CTRL_TRIANGLE)
-            goalkeeperRush();
+        if(d < bestDist)
+        {
+            bestDist = d;
+            best = i;
+        }
+
+        d = distance(ball.x, ball.y,
+                     red[i].x, red[i].y);
+
+        if(d < bestDist)
+        {
+            bestDist = d;
+            best = i + 11;
+        }
+    }
+
+    if(best >= 0 && bestDist < 0.9f)
+    {
+        owner = best;
+
+        if(best < 11)
+            controlled = best;
+
+        ball.vx = 0;
+        ball.vy = 0;
+        passTarget = -1;
+    }
+}
+
+static void updateMatch(unsigned int buttons, unsigned int pressed)
+{
+    float dx = 0;
+    float dy = 0;
+    float speed = 0.17f;
+
+    Player *p = &blue[controlled];
+
+    if(tackleCooldown > 0)
+        tackleCooldown--;
+
+    if(buttons & PSP_CTRL_UP)
+        dy = -1;
+
+    if(buttons & PSP_CTRL_DOWN)
+        dy = 1;
+
+    if(buttons & PSP_CTRL_LEFT)
+        dx = -1;
+
+    if(buttons & PSP_CTRL_RIGHT)
+        dx = 1;
+
+    if(buttons & PSP_CTRL_RTRIGGER)
+        speed = 0.29f;
+
+    /* The player controlled by the user is ALWAYS Blue. */
+    if(dx != 0 || dy != 0)
+    {
+        float length = sqrtf(dx * dx + dy * dy);
+
+        if(length > 0)
+        {
+            dx /= length;
+            dy /= length;
+        }
+
+        moveControlled(dx, dy, speed);
+    }
+
+    /* L = switch to nearest Blue player. */
+    if(pressed & PSP_CTRL_LTRIGGER)
+        switchPlayer();
+
+    /* Defensive controls when Red has possession. */
+    if(owner >= 11 && owner < 22)
+    {
+        if(pressed & PSP_CTRL_CIRCLE)
+            attemptTackle(0);
 
         if(pressed & PSP_CTRL_SQUARE)
             attemptTackle(1);
 
-        if(pressed & PSP_CTRL_CIRCLE)
-            attemptTackle(0);
+        if(pressed & PSP_CTRL_TRIANGLE)
+            goalkeeperRush();
 
-        if(held & PSP_CTRL_CROSS) {
-            float tx=ballX-p->x;
-            float tz=ballZ-p->z;
-            float d=sqrtf(tx*tx+tz*tz);
+        if(buttons & PSP_CTRL_X)
+        {
+            float d = distance(p->x, p->y,
+                               ball.x, ball.y);
 
-            if(d>0.1f) {
-                p->x+=tx/d*0.055f;
-                p->z+=tz/d*0.055f;
+            if(d > 1.0f)
+            {
+                float vx = ball.x - p->x;
+                float vy = ball.y - p->y;
+                float len = sqrtf(vx * vx + vy * vy);
+
+                if(len > 0.1f)
+                {
+                    p->x += vx / len * 0.12f;
+                    p->y += vy / len * 0.12f;
+                }
             }
-
-            if(d<1.35f && tackleCooldown==0)
+            else
+            {
                 attemptTackle(0);
+            }
         }
 
-        if((held & PSP_CTRL_CROSS) &&
-           (held & PSP_CTRL_RTRIGGER)) {
-            float tx=ballX-p->x;
-            float tz=ballZ-p->z;
-            float d=sqrtf(tx*tx+tz*tz);
+        if((buttons & PSP_CTRL_LTRIGGER) &&
+           (buttons & PSP_CTRL_RTRIGGER))
+        {
+            secondPress = 1;
+        }
+        else
+        {
+            secondPress = 0;
+        }
+    }
+    else
+    {
+        /* Attacking controls when Blue has possession. */
+        if(owner == controlled)
+        {
+            if(pressed & PSP_CTRL_X)
+                passBall(0);
 
-            if(d>0.1f) {
-                p->x+=tx/d*0.10f;
-                p->z+=tz/d*0.10f;
+            if(pressed & PSP_CTRL_TRIANGLE)
+                passBall(1);
+
+            if(pressed & PSP_CTRL_SQUARE)
+            {
+                if(buttons & PSP_CTRL_RTRIGGER)
+                    shootBall(0);
+                else if(buttons & PSP_CTRL_TRIANGLE)
+                    shootBall(1);
+                else
+                    shootBall(0);
             }
 
-            if(d<1.7f && tackleCooldown==0)
+            if(pressed & PSP_CTRL_CIRCLE)
+                crossBall();
+
+            if((buttons & PSP_CTRL_X) &&
+               (buttons & PSP_CTRL_RTRIGGER))
+            {
+                moveControlled(0, -1, 0.25f);
+            }
+        }
+        else if(owner == -1)
+        {
+            /* Loose ball: move toward it and collect it. */
+            if(pressed & PSP_CTRL_CIRCLE)
                 attemptTackle(0);
         }
     }
 
-    if(ballOwner<0 && (held & PSP_CTRL_CROSS)) {
-        float tx=ballX-p->x;
-        float tz=ballZ-p->z;
-        float d=sqrtf(tx*tx+tz*tz);
-
-        if(d>0.1f) {
-            p->x+=tx/d*0.06f;
-            p->z+=tz/d*0.06f;
-        }
-    }
+    /* Keep the controlled index within the Blue team. */
+    controlled = clampInt(controlled, 0, 10);
 
     updateAI();
     updateBall();
 
-    previousButtons=held;
+    gameFrames++;
+
+    if(gameFrames % 60 == 0)
+        matchTime++;
 }
 
-/* MAIN */
+static void drawGame(void)
+{
+    int i;
+
+    sceGuStart(GU_DIRECT, list);
+
+    sceGuClearColor(GU_RGBA(5, 10, 15, 255));
+    sceGuClear(GU_COLOR_BUFFER_BIT);
+
+    drawPitch();
+
+    /* Red team */
+    for(i = 0; i < 11; i++)
+        drawPlayer(&red[i], RED, 0);
+
+    /* Blue team */
+    for(i = 0; i < 11; i++)
+        drawPlayer(&blue[i], BLUE, i == controlled);
+
+    drawBall();
+    drawScoreboard();
+
+    sceGuFinish();
+    sceGuSync(0, 0);
+
+    sceDisplayWaitVblankStart();
+    sceGuSwapBuffers();
+}
 
 int main(void)
 {
-    ScePspFVector3 camera={0.0f,29.0f,44.0f};
-    ScePspFVector3 target={0.0f,2.0f,0.0f};
-    ScePspFVector3 up={0.0f,1.0f,0.0f};
-    int i;
-
-    setupTeams();
-
-    sceCtrlSetSamplingCycle(0);
-    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+    SceCtrlData pad;
+    unsigned int buttons;
+    unsigned int pressed;
 
     sceGuInit();
-    sceGuStart(GU_DIRECT,list);
 
-    sceGuDrawBuffer(GU_PSM_8888,(void*)0,BW);
-    sceGuDispBuffer(W,H,(void*)FRAME_SIZE,BW);
-    sceGuDepthBuffer((void*)(2*FRAME_SIZE),BW);
-    sceGuOffset(2048-W/2,2048-H/2);
-    sceGuViewport(2048,2048,W,H);
-    sceGuDepthRange(65535,0);
-    sceGuScissor(0,0,W,H);
-
-    sceGuEnable(GU_SCISSOR_TEST);
-    sceGuDisable(GU_CULL_FACE);
-    sceGuEnable(GU_DEPTH_TEST);
-    sceGuDepthFunc(GU_GEQUAL);
-
-    sceGuClearColor(0xFF202020);
-    sceGuClearDepth(0);
-    sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
-
-    sceGuFinish();
-    sceGuSync(0,0);
-
-    sceDisplayWaitVblankStart();
-    sceGuDisplay(GU_TRUE);
-
-    for(;;) {
-        updateMatch();
-
-        sceGuStart(GU_DIRECT,list);
-
-        sceGuClearColor(0xFF202020);
-        sceGuClearDepth(0);
-        sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
-
-        sceGuEnable(GU_DEPTH_TEST);
-
-        sceGumMatrixMode(GU_PROJECTION);
-        sceGumLoadIdentity();
-        sceGumPerspective(48.0f,(float)W/H,1.0f,200.0f);
-
-        sceGumMatrixMode(GU_VIEW);
-        sceGumLoadIdentity();
-        sceGumLookAt(&camera,&target,&up);
-
-        sceGumMatrixMode(GU_MODEL);
-        sceGumLoadIdentity();
-
-        drawStadium();
-        drawPitch();
-        drawGoals();
-        drawBoards();
-
-        /* Red AI team. */
-        for(i=0;i<11;i++) {
-            unsigned int kit=(i==0)?0xFF202020:RED;
-            drawPlayer(red[i].x,red[i].z,kit,0);
-        }
-
-        /* Blue user-controlled team. */
-        for(i=0;i<11;i++) {
-            unsigned int kit=(i==0)?0xFF20A020:BLUE;
-            drawPlayer(blue[i].x,blue[i].z,kit,i==controlled);
-        }
-
-        drawBall(ballX,ballZ);
-        drawScoreboard();
-
-        sceGuFinish();
-        sceGuSync(0,0);
-
-        sceDisplayWaitVblankStart();
-        sceGuSwapBuffers();
-
-        frameCount++;
-    }
-
-    sceGuTerm();
-    sceKernelExitGame();
-
-    return 0;
-}
+    sceGu
