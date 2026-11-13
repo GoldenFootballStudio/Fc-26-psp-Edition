@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#define PSP_CTRL_X PSP_CTRL_CROSS
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
